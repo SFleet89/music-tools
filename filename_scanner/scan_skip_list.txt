@@ -1,0 +1,102 @@
+# Music Filename Scanner — Skip List
+# =====================================
+# One pattern per line. A file is skipped if the pattern appears anywhere
+# in its filename (case-insensitive).
+#
+# Use this for artists or files where the "unusual" formatting is intentional
+# and you don't want them flagged on every scan.
+#
+# Add or remove patterns as needed. Blank lines and lines starting with # are ignored.
+
+
+# ── Intentional lowercase artist names ───────────────────────────────────────
+
+ilan bluestone
+
+
+# ── Intentional all-caps OST titles ──────────────────────────────────────────
+
+mobile suit gundam 00
+buena vista social club
+neon genesis evangelion
+rockman exe
+mmbn music
+
+
+# ── Intentional all-lowercase OST titles ─────────────────────────────────────
+
+soundtemp
+
+
+# ── Intentional stylised artist/title formatting ─────────────────────────────
+
+by_myslf
+
+
+# ── Anime OSTs ────────────────────────────────────────────────────────────────
+# Many anime soundtracks use intentional all-caps or all-lowercase title formatting.
+# Files in the Anime folder are skipped entirely.
+
+anime
+
+
+# ── Albums you plan to rename in bulk separately ─────────────────────────────
+# Uncomment once you've handled them, to keep them out of future scans.
+
+
+
+# ── Added from Scan Viewer ──────────────────────────────────────────
+
+# Files
+11 - am1200
+09 - jimmy
+12th canvas - damage
+toxik - annihilate
+25 - memories of․․․
+p․i․m․p․
+i do, i do, i do, i do, i do
+pvc iv
+clsm - heey
+a l i e n s
+wotw potp
+a l i e n s
+lai lai hei
+02 - qwerty
+01 - kiss jam
+14 jay-z - nymp
+232 vs. sa-x
+19 talking blues
+fnl live mix (edited)
+01 - hyperpower!
+01 - tsbol
+xxyyxx - xxyyxx
+jogo - fffuuu!
+17 - itunes
+06 - wotw⁄potp
+08 - i‐e‐a‐i‐a‐i‐o
+09 - i-e-a-i-a-i-o
+11 - cubert
+13 - p․l․u․c․k․
+17 - itunes
+06 - wotw⁄potp
+08 - i‐e‐a‐i‐a‐i‐o
+09 - i-e-a-i-a-i-o
+11 - cubert
+13 - p․l․u․c․k․
+mstrkrft - fist of god
+17 - itunes
+06 - wotw⁄potp
+08 - i‐e‐a‐i‐a‐i‐o
+09 - i-e-a-i-a-i-o
+11 - cubert
+13 - p․l․u․c․k․
+mstrkrft - fist of god
+04 - -
+16 - how come --emb--
+04 - brahmand- the final frontier (short)
+03 - the winds of heaven∶ windsongs; maruts -the sons of heaven
+wolfgang amadeus mozart - no713 - box04 - cd09 -t02 piano concerto no 20 in d minor k 466 romance
+13 - c.r.e.a.m.
+12 - I've Seen Things....mp3
+01 - in front of our eyes, a treasure chest...
+11 - yanking out my...

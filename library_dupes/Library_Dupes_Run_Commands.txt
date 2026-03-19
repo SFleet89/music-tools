@@ -1,0 +1,24 @@
+# ── Full scan (fingerprint + filename matching) ──
+python find_library_dupes.py
+
+# ── Matching method options ──
+python find_library_dupes.py --no-fp           # filename matching only (no fpcalc needed)
+python find_library_dupes.py --no-filename     # fingerprint matching only
+
+# ── Rebuild fingerprint cache from scratch ──
+python find_library_dupes.py --rebuild-cache
+
+# ── Override settings ──
+python find_library_dupes.py --path "C:\Music\Organized"   # override folder path
+python find_library_dupes.py --config other.json            # use a different config file
+
+# ── Combinations ──
+python find_library_dupes.py --no-fp --path "C:\Music\Organized"
+python find_library_dupes.py --rebuild-cache --no-filename
+python find_library_dupes.py --rebuild-cache --config other.json
+
+# ── Recommended first run ──
+# Step 1 — dry run without fingerprinting to get a fast baseline:
+python find_library_dupes.py --no-fp
+# Step 2 — full run with fingerprinting to catch renamed/retagged duplicates:
+python find_library_dupes.py

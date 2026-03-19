@@ -1,0 +1,42 @@
+{
+  "_comment": "Library Duplicate Finder - Configuration File",
+  "_comment2": "Finds songs duplicated across different top-level artist folders.",
+  "folders": {
+    "_comment": "organized: your sorted music root folder",
+    "organized": "C:\\Music\\Organized",
+    "_comment2": "reports: where CSV reports and logs are saved",
+    "reports": "C:\\Music\\tools\\library_dupes\\reports",
+    "_comment3": "holding: where removed duplicate files are moved to (not deleted)",
+    "holding": "C:\\Music\\tools\\library_dupes\\removed"
+  },
+  "matching": {
+    "_comment": "fp_enabled: use audio fingerprinting (requires fpcalc)",
+    "fp_enabled": true,
+    "_comment2": "fp_similarity_threshold: 0-100. How similar two fingerprints must be.",
+    "fp_similarity_threshold": 85,
+    "_comment3": "filename_fallback: also check metadata tags and exact filename matches",
+    "filename_fallback": true,
+    "_comment4": "duration_tolerance_seconds: max duration difference to still consider a match",
+    "duration_tolerance_seconds": 2,
+    "_comment5": "fuzzy_enabled: use fuzzy matching for artist/title tags",
+    "fuzzy_enabled": true,
+    "_comment6": "fuzzy_threshold: 0-100. How similar two tags must be. 88 recommended.",
+    "fuzzy_threshold": 88
+  },
+  "performance": {
+    "_comment": "max_threads: parallel threads for metadata scanning. 0 = auto",
+    "max_threads": 0
+  },
+  "fingerprint": {
+    "_comment": "fpcalc_path: path to fpcalc.exe, or just 'fpcalc' if in your PATH",
+    "fpcalc_path": "fpcalc",
+    "_comment2": "fp_cache_file: fingerprint cache \u2014 can be shared with find_music_duplicates.py",
+    "fp_cache_file": "C:\\Music\\tools\\duplicate_finder\\music_fp_cache.json",
+    "_comment3": "min_fp_length: fingerprints shorter than this are considered invalid",
+    "min_fp_length": 50,
+    "_comment4": "lsh_bands: LSH bands for candidate detection",
+    "lsh_bands": 20,
+    "_comment5": "lsh_band_size: integers per LSH band",
+    "lsh_band_size": 6
+  }
+}

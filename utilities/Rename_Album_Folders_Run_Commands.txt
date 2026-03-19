@@ -1,0 +1,35 @@
+# ── Dry run (default — safe, nothing is renamed) ──
+python rename_album_folders.py
+
+# ── Rename for real ──
+python rename_album_folders.py --apply
+
+# ── Pick folder(s) with a dialog ──
+python rename_album_folders.py --pick
+python rename_album_folders.py --pick --apply
+
+# ── Override folder path ──
+python rename_album_folders.py --path "C:\Music\Organized"
+python rename_album_folders.py --path "C:\Music\Organized" --apply
+
+# ── Skip folders already correctly named (faster on large libraries) ──
+python rename_album_folders.py --filter
+python rename_album_folders.py --filter --apply
+
+# ── Only rename at a specific depth ──
+python rename_album_folders.py --depth 2             # Artist\Album structure
+python rename_album_folders.py --depth 1             # flat library
+python rename_album_folders.py --depth 2 --apply
+
+# ── Combinations ──
+python rename_album_folders.py --filter --depth 2
+python rename_album_folders.py --filter --depth 2 --apply
+python rename_album_folders.py --pick --filter --apply
+python rename_album_folders.py --path "C:\Music" --filter --depth 2 --apply
+
+# ── Recommended workflow ──
+# Step 1 — dry run to see what would change
+python rename_album_folders.py --filter --depth 2
+
+# Step 2 — rename for real
+python rename_album_folders.py --filter --depth 2 --apply

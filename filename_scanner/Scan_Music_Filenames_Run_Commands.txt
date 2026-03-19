@@ -1,0 +1,10 @@
+python scan_music_filenames.py                             # scan default folder (set in script)
+python scan_music_filenames.py --path "C:\Music\Organized" # scan a specific folder
+python scan_music_filenames.py --summary                   # folder list only, no individual filenames
+python scan_music_filenames.py --issues                    # adds issue type breakdown at the end
+
+# Combinations
+python scan_music_filenames.py --summary --issues          # folder list + issue breakdown, no filenames
+python scan_music_filenames.py --path "C:\Music\Organized" --summary
+python scan_music_filenames.py --path "C:\Music\Organized" --issues
+python scan_music_filenames.py --path "C:\Music\Organized" --summary --issues

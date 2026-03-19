@@ -1,0 +1,49 @@
+{
+  "_comment": "Music Duplicate Finder - Configuration File",
+  "_comment2": "Edit the values below. Do not remove any keys.",
+  "folders": {
+    "organized": "C:\\Music\\Organized",
+    "unsorted": "C:\\Music\\Unsorted",
+    "duplicates": "C:\\Music\\Duplicates",
+    "better_quality": "C:\\Music\\BetterQuality"
+  },
+  "matching": {
+    "_comment": "mode: 1=filename only, 2=metadata only, 3=either, 4=both (recommended)",
+    "mode": "4",
+    "_comment2": "fuzzy_enabled: use fuzzy matching for artist/album/title",
+    "fuzzy_enabled": true,
+    "_comment3": "fuzzy_threshold: 0-100. 100 = exact only. 85-90 recommended.",
+    "fuzzy_threshold": 88,
+    "_comment4": "use_duration: include track duration in matching to reduce false positives",
+    "use_duration": true,
+    "_comment5": "duration_tolerance_seconds: how many seconds apart two tracks can be and still match",
+    "duration_tolerance_seconds": 2
+  },
+  "performance": {
+    "_comment": "max_threads: number of parallel threads for scanning. 0 = auto (CPU count)",
+    "max_threads": 0,
+    "_comment2": "cache_enabled: cache organized folder scan to speed up future runs",
+    "cache_enabled": true,
+    "_comment3": "cache_file: where to store the metadata cache.",
+    "cache_file": "music_cache.json"
+  },
+  "resume": {
+    "_comment": "If the script is interrupted, it can resume from where it left off.",
+    "enabled": true,
+    "resume_file": "music_resume.json"
+  },
+  "output": {
+    "_comment": "Where logs and CSV reports are saved.",
+    "log_folder": "C:\\Music\\tools\\duplicate_finder\\reports"
+  },
+  "acoustid": {
+    "_comment": "enabled: set to true to be offered fingerprint matching after the main scan",
+    "enabled": true,
+    "_comment2": "fpcalc_path: path to fpcalc.exe, or just 'fpcalc' if it is in your PATH",
+    "fpcalc_path": "C:\\Music\\tools\\duplicate_finder\\fpcalc.exe",
+    "_comment3": "similarity_threshold: how similar two fingerprints must be to count as a match (0-100)",
+    "similarity_threshold": 85,
+    "_comment4": "fp_cache_file: where to cache fingerprints to avoid re-scanning on future runs",
+    "fp_cache_file": "music_fp_cache.json"
+  }
+}

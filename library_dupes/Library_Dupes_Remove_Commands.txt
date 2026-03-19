@@ -1,0 +1,32 @@
+# ── Preview what will be removed ──
+python remove_library_dupes.py "library_dupes_decisions.csv" --list
+python remove_library_dupes.py "library_dupes_decisions.csv" --dry-run
+
+# ── Remove for real ──
+python remove_library_dupes.py "library_dupes_decisions.csv"
+
+# ── Undo a removal run ──
+python remove_library_dupes.py "library_dupes_decisions.csv" --undo
+python remove_library_dupes.py "library_dupes_decisions.csv" --undo --dry-run
+
+# ── Use a different config ──
+python remove_library_dupes.py "library_dupes_decisions.csv" --config other.json
+
+# ── Recommended workflow ──
+# Step 1 — run the duplicate finder
+python find_library_dupes.py
+
+# Step 2 — open library_dupes_viewer.html, review matches, mark decisions, download CSV
+
+# Step 3 — preview the removals
+python remove_library_dupes.py "library_dupes_decisions.csv" --list
+python remove_library_dupes.py "library_dupes_decisions.csv" --dry-run
+
+# Step 4 — remove for real
+python remove_library_dupes.py "library_dupes_decisions.csv"
+
+# Step 5 — review the holding folder, delete when satisfied
+# Holding folder: C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\library_dupes\removed
+
+# Step 6 — if you change your mind, undo
+python remove_library_dupes.py "library_dupes_decisions.csv" --undo

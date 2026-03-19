@@ -1,0 +1,32 @@
+# ── Basic usage ──
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv"
+
+# ── Dry run first (recommended — preview what would be restored) ──
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --dry-run
+
+# ── Review the CSV contents before doing anything ──
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --list
+
+# ── See all categories and match methods in the report ──
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --list-categories
+
+# ── Filter by category ──
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --filter-category "Exact Match"
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --filter-category "DUPLICATE"
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --filter-category "BETTER QUALITY"
+
+# ── Filter by match method ──
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --filter-method "audio fingerprint"
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --filter-method "filename/metadata"
+
+# ── Combine filters ──
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --filter-category "DUPLICATE" --filter-method "audio fingerprint"
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --filter-category "DUPLICATE" --dry-run
+
+# ── Recommended workflow ──
+# Step 1 — review what the CSV contains:
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --list
+# Step 2 — dry run to confirm:
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv" --dry-run
+# Step 3 — undo for real:
+python undo_duplicates.py "C:\path\to\music_report_TIMESTAMP_live_mode4_fp.csv"

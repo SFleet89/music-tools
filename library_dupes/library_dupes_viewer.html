@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Library Duplicates Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+
+  header {
+    background: #1a1d2e;
+    border-bottom: 1px solid #2d3148;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 17px; font-weight: 600; color: #fff; }
+  header span { font-size: 13px; color: #64748b; margin-left: 4px; }
+  .header-btn {
+    background: #1a1d2e; border: 1px solid #2d3148; border-radius: 7px;
+    color: #94a3b8; cursor: pointer; font-size: 12px; padding: 6px 12px;
+    transition: all 0.15s;
+  }
+  .header-btn:hover { border-color: #6366f1; color: #e2e8f0; }
+  #load-new { margin-left: auto; }
+
+  /* ── Drop zone ── */
+  #drop-zone {
+    margin: 40px auto; max-width: 700px;
+    border: 2px dashed #2d3148; border-radius: 16px;
+    padding: 100px 60px; text-align: center; cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #drop-zone:hover, #drop-zone.drag-over { border-color: #6366f1; background: #1a1d2e; }
+  #drop-zone svg { margin-bottom: 16px; opacity: 0.4; }
+  #drop-zone p { color: #94a3b8; font-size: 14px; line-height: 1.7; }
+  #drop-zone strong { color: #e2e8f0; }
+  #file-input { display: none; }
+
+  #app { display: none; padding: 20px 24px 60px; }
+
+  /* ── Stats ── */
+  .stats { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stat { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; padding: 10px 16px; font-size: 13px; }
+  .stat strong { font-size: 20px; display: block; color: #fff; }
+  .stat span { color: #64748b; }
+
+  /* ── Tabs ── */
+  .view-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tab-btn {
+    padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+    cursor: pointer; border: 1px solid #2d3148; background: #1a1d2e; color: #64748b;
+    transition: all 0.15s;
+  }
+  .tab-btn.active { background: #6366f1; border-color: #6366f1; color: #fff; }
+  .tab-btn:hover:not(.active) { border-color: #6366f1; color: #e2e8f0; }
+
+  /* ── Method pills ── */
+  .method-pills { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
+  .pill {
+    padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid transparent; transition: all 0.15s; user-select: none;
+  }
+  .pill:hover { opacity: 0.85; }
+  .pill.inactive { background: #1a1d2e !important; border-color: #2d3148 !important; color: #64748b !important; }
+  .pill-fp       { background: #6366f122; border-color: #6366f1; color: #a78bfa; }
+  .pill-metadata { background: #05966922; border-color: #059669; color: #34d399; }
+  .pill-fuzzy    { background: #d9770622; border-color: #d97706; color: #fbbf24; }
+  .pill-filename { background: #0891b222; border-color: #0891b2; color: #22d3ee; }
+
+  /* ── Controls ── */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
+  input[type=text], select {
+    background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px;
+    color: #e2e8f0; padding: 8px 12px; font-size: 13px; outline: none;
+  }
+  input[type=text] { width: 260px; }
+  input[type=text]:focus, select:focus { border-color: #6366f1; }
+  .reset-btn { font-size: 12px; color: #6366f1; background: none; border: none; cursor: pointer; padding: 0; margin-left: auto; }
+  .reset-btn:hover { text-decoration: underline; }
+
+  #result-count { font-size: 13px; color: #64748b; margin-bottom: 10px; }
+
+  /* ══════════════════════════════════════
+     PAIR VIEW
+  ══════════════════════════════════════ */
+  .dupe-list { display: flex; flex-direction: column; gap: 12px; }
+
+  .dupe-card { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 10px; overflow: hidden; }
+  .dupe-card.decided { border-color: #1e4d2b; }
+
+  .dupe-card-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: #141726; border-bottom: 1px solid #2d3148;
+  }
+  .method-badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 10px; }
+  .method-badge.fp       { background: #6366f122; border: 1px solid #6366f1; color: #a78bfa; }
+  .method-badge.metadata { background: #05966922; border: 1px solid #059669; color: #34d399; }
+  .method-badge.fuzzy    { background: #d9770622; border: 1px solid #d97706; color: #fbbf24; }
+  .method-badge.filename { background: #0891b222; border: 1px solid #0891b2; color: #22d3ee; }
+  .fp-score { font-size: 12px; color: #64748b; }
+  .dupe-num { font-size: 11px; color: #374151; margin-left: auto; }
+
+  .dupe-files { display: grid; grid-template-columns: 1fr 1fr; }
+  .dupe-file { padding: 14px 16px; border-right: 1px solid #2d3148; }
+  .dupe-file:last-child { border-right: none; }
+  .dupe-file-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #374151; margin-bottom: 8px; }
+  .dupe-filename { font-family: "Consolas","Monaco",monospace; font-size: 12px; color: #e2e8f0; word-break: break-all; margin-bottom: 6px; }
+  .dupe-folder { font-size: 11px; color: #00ff0d; margin-bottom: 8px; word-break: break-all; }
+  .dupe-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .meta-chip { font-size: 11px; padding: 2px 8px; border-radius: 8px; background: #1e2235; color: #94a3b8; border: 1px solid #2d3148; }
+  .dupe-tags { font-size: 11px; color: #475569; font-style: italic; word-break: break-word; }
+  .dupe-path { font-size: 10px; color: #1e2235; font-family: monospace; word-break: break-all; margin-top: 6px; transition: color 0.15s; cursor: default; }
+  .dupe-path:hover { color: #475569; }
+
+  /* Decision row */
+  .decision-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-top: 1px solid #1e2235; background: #111320;
+  }
+  .decision-label { font-size: 11px; color: #374151; }
+  .dec-btn {
+    font-size: 11px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid; transition: all 0.12s; background: none;
+  }
+  .dec-btn.keep-a   { border-color: #1d4ed8; color: #60a5fa; }
+  .dec-btn.keep-a:hover, .dec-btn.keep-a.active { background: #1d4ed822; color: #93c5fd; }
+  .dec-btn.keep-b   { border-color: #7c3aed; color: #a78bfa; }
+  .dec-btn.keep-b:hover, .dec-btn.keep-b.active { background: #7c3aed22; color: #c4b5fd; }
+  .dec-btn.keep-both { border-color: #374151; color: #6b7280; }
+  .dec-btn.keep-both:hover, .dec-btn.keep-both.active { background: #37415122; color: #9ca3af; }
+  .dec-btn.skip     { border-color: #374151; color: #6b7280; }
+  .dec-btn.skip:hover, .dec-btn.skip.active { background: #37415122; color: #9ca3af; }
+  .decided-badge { font-size: 11px; color: #34d399; margin-left: auto; }
+
+  /* ══════════════════════════════════════
+     GROUP VIEW
+  ══════════════════════════════════════ */
+  .group-list { display: flex; flex-direction: column; gap: 14px; }
+
+  .group-card { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 10px; overflow: hidden; }
+  .group-card.decided { border-color: #1e4d2b; }
+
+  .group-card-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: #141726; border-bottom: 1px solid #2d3148;
+  }
+  .group-title { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .group-count { font-size: 11px; background: #374151; color: #9ca3af; padding: 2px 8px; border-radius: 10px; }
+  .group-method { font-size: 11px; color: #64748b; }
+  .group-num { font-size: 11px; color: #374151; margin-left: auto; }
+
+  .group-files { display: flex; flex-direction: column; }
+  .group-file {
+    display: grid; grid-template-columns: 1fr auto auto auto auto;
+    gap: 10px; align-items: center;
+    padding: 10px 16px; border-top: 1px solid #1e2235;
+    font-size: 12px;
+  }
+  .group-file:first-child { border-top: none; }
+  .gf-name { font-family: "Consolas","Monaco",monospace; color: #e2e8f0; word-break: break-all; }
+  .gf-folder { font-size: 11px; color: #00ff0d; }
+  .gf-chip { font-size: 11px; padding: 2px 8px; border-radius: 8px; background: #1e2235; color: #94a3b8; border: 1px solid #2d3148; white-space: nowrap; }
+  .gf-path { font-size: 10px; color: #1e2235; font-family: monospace; cursor: default; transition: color 0.15s; }
+  .gf-path:hover { color: #475569; }
+
+  .group-decision-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 16px; border-top: 1px solid #1e2235; background: #111320;
+  }
+  .group-keep-btn {
+    font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #1d4ed8; color: #60a5fa; background: none; transition: all 0.12s;
+  }
+  .group-keep-btn:hover, .group-keep-btn.active { background: #1d4ed822; color: #93c5fd; }
+  .group-skip-btn {
+    font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #374151; color: #6b7280; background: none; transition: all 0.12s; margin-left: auto;
+  }
+  .group-skip-btn:hover, .group-skip-btn.active { background: #37415122; color: #9ca3af; }
+
+  /* ── Decision panel ── */
+  #decision-panel {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #1a1d2e; border-top: 1px solid #2d3148;
+    padding: 10px 24px; display: flex; align-items: center; gap: 16px;
+    z-index: 50;
+  }
+  #decision-panel.hidden { display: none; }
+  .dp-stat { font-size: 13px; color: #64748b; }
+  .dp-stat strong { color: #e2e8f0; }
+  .dp-btn {
+    padding: 8px 16px; border-radius: 7px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid; transition: all 0.15s;
+  }
+  .dp-btn-secondary { background: #1e2235; border-color: #2d3148; color: #94a3b8; }
+  .dp-btn-secondary:hover { border-color: #6366f1; color: #e2e8f0; }
+  .dp-btn-primary { background: #6366f1; border-color: #6366f1; color: #fff; margin-left: auto; }
+  .dp-btn-primary:hover { background: #4f46e5; }
+  .dp-btn-primary:disabled { opacity: 0.35; cursor: default; }
+
+  .no-results { text-align: center; padding: 60px 20px; color: #64748b; font-size: 14px; }
+
+  #toast {
+    position: fixed; bottom: 70px; left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    background: #1a1d2e; border: 1px solid #6366f1;
+    color: #e2e8f0; padding: 10px 20px; border-radius: 8px; font-size: 13px;
+    opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 100;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2">
+    <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+  </svg>
+  <h1>Library Duplicates Viewer</h1>
+  <span id="header-file"></span>
+  <button id="load-new" class="header-btn" style="display:none" onclick="resetViewer()">⟳ Load new report</button>
+</header>
+
+<div id="drop-zone" onclick="document.getElementById('file-input').click()">
+  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+    <polyline points="14 2 14 8 20 8"/>
+    <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+  </svg>
+  <p><strong>Drop a library_dupes_*.csv here</strong><br>or click to browse</p>
+</div>
+<input type="file" id="file-input" accept=".csv">
+
+<div id="app">
+  <div class="stats" id="stats"></div>
+
+  <div class="view-tabs">
+    <button class="tab-btn active" onclick="setView('pairs')">Pair View</button>
+    <button class="tab-btn" onclick="setView('groups')">Group View</button>
+  </div>
+
+  <div class="method-pills" id="method-pills"></div>
+
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search filename, folder, artist…">
+    <select id="sort-sel">
+      <option value="method">Sort by match method</option>
+      <option value="folder">Sort by folder A</option>
+      <option value="filename">Sort by filename A</option>
+      <option value="score">Sort by FP score</option>
+    </select>
+    <select id="sort-dir">
+      <option value="asc">Ascending</option>
+      <option value="desc">Descending</option>
+    </select>
+    <button class="reset-btn" onclick="resetFilters()">Reset filters</button>
+  </div>
+
+  <div id="result-count"></div>
+  <div id="pair-view">
+    <div class="dupe-list" id="dupe-list"></div>
+  </div>
+  <div id="group-view" style="display:none">
+    <div class="group-list" id="group-list"></div>
+  </div>
+  <div class="no-results" id="no-results" style="display:none">No duplicates match the current filters.</div>
+</div>
+
+<!-- Decision panel -->
+<div id="decision-panel" class="hidden">
+  <span class="dp-stat">Decided: <strong id="dp-decided">0</strong></span>
+  <span class="dp-stat">Pending: <strong id="dp-pending">0</strong></span>
+  <button class="dp-btn dp-btn-secondary" onclick="clearDecisions()">Clear all</button>
+  <button class="dp-btn dp-btn-primary" id="dp-download" onclick="downloadDecisions()" disabled>Download decisions CSV</button>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+let allRows       = [];
+let groups        = [];   // [{key, label, method, files: [{...}], rows: [{...}]}]
+let activeMethods = new Set();
+let searchTerm    = '';
+let sortSel       = 'method';
+let sortDir       = 'asc';
+let currentView   = 'pairs';
+let decisions     = {};   // rowKey → {choice, keepPath}  (for pairs)
+                          // groupKey → {choice, keepPaths: []}  (for groups)
+
+// ═══════════════════════════════════════════════════════════════
+//  CSV PARSER
+// ═══════════════════════════════════════════════════════════════
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/);
+  const headers = splitLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = splitLine(lines[i]);
+    const row = {};
+    headers.forEach((h, j) => row[h.trim()] = (vals[j] || '').trim());
+    rows.push(row);
+  }
+  return rows;
+}
+function splitLine(line) {
+  const result = []; let cur = '', inQ = false;
+  for (const c of line) {
+    if (c === '"') { inQ = !inQ; }
+    else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+    else cur += c;
+  }
+  result.push(cur);
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LOAD
+// ═══════════════════════════════════════════════════════════════
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    let text = e.target.result;
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    allRows = parseCSV(text);
+    document.getElementById('header-file').textContent = file.name;
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('app').style.display       = 'block';
+    document.getElementById('load-new').style.display  = 'inline';
+    buildGroups();
+    buildStats();
+    buildPills();
+    render();
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GROUPING  — cluster rows by shared file paths
+// ═══════════════════════════════════════════════════════════════
+function buildGroups() {
+  // Union-Find to cluster all paths that appear together
+  const parent = {};
+  function find(x) {
+    if (!parent[x]) parent[x] = x;
+    if (parent[x] !== x) parent[x] = find(parent[x]);
+    return parent[x];
+  }
+  function union(a, b) {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+
+  // Collect all unique paths and union pairs
+  const pathInfo = {};  // path → {filename, folder, topFolder, size, bitrate, duration, title, artist, album, fullPath}
+
+  allRows.forEach(r => {
+    const pa = r['File A - Full Path'];
+    const pb = r['File B - Full Path'];
+    union(pa, pb);
+    pathInfo[pa] = {
+      filename:  r['File A - Filename'],
+      topFolder: r['File A - Top Folder'],
+      folder:    r['File A - Folder'],
+      size:      r['File A - Size'],
+      bitrate:   r['File A - Bitrate'],
+      duration:  r['File A - Duration'],
+      title:     r['File A - Title'],
+      artist:    r['File A - Artist'],
+      album:     r['File A - Album'],
+      fullPath:  pa,
+    };
+    pathInfo[pb] = {
+      filename:  r['File B - Filename'],
+      topFolder: r['File B - Top Folder'],
+      folder:    r['File B - Folder'],
+      size:      r['File B - Size'],
+      bitrate:   r['File B - Bitrate'],
+      duration:  r['File B - Duration'],
+      title:     r['File B - Title'],
+      artist:    r['File B - Artist'],
+      album:     r['File B - Album'],
+      fullPath:  pb,
+    };
+  });
+
+  // Cluster paths by root
+  const clusters = {};
+  for (const path of Object.keys(pathInfo)) {
+    const root = find(path);
+    if (!clusters[root]) clusters[root] = [];
+    clusters[root].push(path);
+  }
+
+  // Build group objects
+  groups = [];
+  for (const [root, paths] of Object.entries(clusters)) {
+    if (paths.length < 2) continue;
+    const files = paths.map(p => pathInfo[p]);
+    // Representative label = artist + title from first file with tags, else filename
+    const rep = files.find(f => f.artist && f.title) || files[0];
+    const label = (rep.artist && rep.title)
+      ? `${rep.artist} — ${rep.title}`
+      : rep.filename;
+    // Collect rows that belong to this group
+    const pathSet = new Set(paths);
+    const groupRows = allRows.filter(r =>
+      pathSet.has(r['File A - Full Path']) && pathSet.has(r['File B - Full Path'])
+    );
+    // Best method: fp > metadata > fuzzy > filename
+    const methods = groupRows.map(r => r['Match Method'] || '');
+    let method = methods[0] || '';
+    if (methods.some(m => m.includes('fingerprint'))) method = methods.find(m => m.includes('fingerprint'));
+    else if (methods.some(m => m === 'metadata tags')) method = 'metadata tags';
+    else if (methods.some(m => m.includes('fuzzy'))) method = methods.find(m => m.includes('fuzzy'));
+
+    groups.push({ key: root, label, method, files, rows: groupRows });
+  }
+
+  groups.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STATS + PILLS
+// ═══════════════════════════════════════════════════════════════
+function methodType(m) {
+  if ((m || '').includes('fingerprint')) return 'fp';
+  if ((m || '') === 'metadata tags')     return 'metadata';
+  if ((m || '').includes('fuzzy'))       return 'fuzzy';
+  return 'filename';
+}
+
+function buildStats() {
+  const fpC   = allRows.filter(r => methodType(r['Match Method']) === 'fp').length;
+  const metaC = allRows.filter(r => methodType(r['Match Method']) === 'metadata').length;
+  const fuzC  = allRows.filter(r => methodType(r['Match Method']) === 'fuzzy').length;
+  const fnC   = allRows.filter(r => methodType(r['Match Method']) === 'filename').length;
+  const folders = new Set([
+    ...allRows.map(r => r['File A - Top Folder']),
+    ...allRows.map(r => r['File B - Top Folder']),
+  ]).size;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><strong>${allRows.length.toLocaleString()}</strong><span>Duplicate pairs</span></div>
+    <div class="stat"><strong>${groups.length.toLocaleString()}</strong><span>Unique songs</span></div>
+    <div class="stat"><strong>${folders.toLocaleString()}</strong><span>Folders involved</span></div>
+    ${fpC   ? `<div class="stat"><strong>${fpC.toLocaleString()}</strong><span>Fingerprint</span></div>` : ''}
+    ${metaC ? `<div class="stat"><strong>${metaC.toLocaleString()}</strong><span>Metadata</span></div>` : ''}
+    ${fuzC  ? `<div class="stat"><strong>${fuzC.toLocaleString()}</strong><span>Fuzzy</span></div>` : ''}
+    ${fnC   ? `<div class="stat"><strong>${fnC.toLocaleString()}</strong><span>Filename</span></div>` : ''}
+  `;
+}
+
+function buildPills() {
+  const c = document.getElementById('method-pills');
+  c.innerHTML = '';
+  const counts = { fp: 0, metadata: 0, fuzzy: 0, filename: 0 };
+  allRows.forEach(r => counts[methodType(r['Match Method'])]++);
+  if (counts.fp)       addPill(c, 'fp',       `Fingerprint (${counts.fp})`);
+  if (counts.metadata) addPill(c, 'metadata', `Metadata tags (${counts.metadata})`);
+  if (counts.fuzzy)    addPill(c, 'fuzzy',    `Fuzzy match (${counts.fuzzy})`);
+  if (counts.filename) addPill(c, 'filename', `Filename (${counts.filename})`);
+}
+function addPill(container, key, label) {
+  const p = document.createElement('div');
+  p.className = `pill pill-${key}`;
+  p.textContent = label;
+  p.onclick = () => {
+    if (activeMethods.has(key)) { activeMethods.delete(key); p.classList.add('inactive'); }
+    else { activeMethods.add(key); p.classList.remove('inactive'); }
+    render();
+  };
+  container.appendChild(p);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  VIEW SWITCHING
+// ═══════════════════════════════════════════════════════════════
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', (i === 0 && v === 'pairs') || (i === 1 && v === 'groups'));
+  });
+  document.getElementById('pair-view').style.display  = v === 'pairs'  ? 'block' : 'none';
+  document.getElementById('group-view').style.display = v === 'groups' ? 'block' : 'none';
+  render();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FILTER + SORT
+// ═══════════════════════════════════════════════════════════════
+function getFilteredRows() {
+  let rows = allRows;
+  if (activeMethods.size > 0)
+    rows = rows.filter(r => activeMethods.has(methodType(r['Match Method'])));
+  if (searchTerm) {
+    const q = searchTerm.toLowerCase();
+    rows = rows.filter(r =>
+      (r['File A - Filename']   || '').toLowerCase().includes(q) ||
+      (r['File B - Filename']   || '').toLowerCase().includes(q) ||
+      (r['File A - Top Folder'] || '').toLowerCase().includes(q) ||
+      (r['File B - Top Folder'] || '').toLowerCase().includes(q) ||
+      (r['File A - Artist']     || '').toLowerCase().includes(q) ||
+      (r['File B - Artist']     || '').toLowerCase().includes(q) ||
+      (r['File A - Folder']     || '').toLowerCase().includes(q) ||
+      (r['File B - Folder']     || '').toLowerCase().includes(q)
+    );
+  }
+  return rows.slice().sort((a, b) => {
+    let va, vb;
+    if (sortSel === 'folder')   { va = a['File A - Top Folder']||''; vb = b['File A - Top Folder']||''; }
+    else if (sortSel === 'filename') { va = a['File A - Filename']||'';   vb = b['File A - Filename']||''; }
+    else if (sortSel === 'score') { va = parseFloat(a['FP Score'])||0; vb = parseFloat(b['FP Score'])||0; }
+    else { va = a['Match Method']||''; vb = b['Match Method']||''; }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ?  1 : -1;
+    return 0;
+  });
+}
+
+function getFilteredGroups() {
+  let gs = groups;
+  if (activeMethods.size > 0)
+    gs = gs.filter(g => g.rows.some(r => activeMethods.has(methodType(r['Match Method']))));
+  if (searchTerm) {
+    const q = searchTerm.toLowerCase();
+    gs = gs.filter(g =>
+      g.label.toLowerCase().includes(q) ||
+      g.files.some(f =>
+        (f.filename  || '').toLowerCase().includes(q) ||
+        (f.topFolder || '').toLowerCase().includes(q) ||
+        (f.artist    || '').toLowerCase().includes(q)
+      )
+    );
+  }
+  return gs;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════════════════════════
+function render() {
+  if (currentView === 'pairs') renderPairs();
+  else renderGroups();
+  updateDecisionPanel();
+}
+
+function renderPairs() {
+  const rows  = getFilteredRows();
+  const list  = document.getElementById('dupe-list');
+  const noRes = document.getElementById('no-results');
+  document.getElementById('result-count').textContent =
+    `Showing ${rows.length.toLocaleString()} of ${allRows.length.toLocaleString()} pairs`;
+
+  if (!rows.length) { list.innerHTML = ''; noRes.style.display = 'block'; return; }
+  noRes.style.display = 'none';
+
+  list.innerHTML = rows.map((r, i) => {
+    const mtype   = methodType(r['Match Method']);
+    const score   = r['FP Score'] ? `<span class="fp-score">${r['FP Score']}</span>` : '';
+    const rkey    = rowKey(r);
+    const dec     = decisions[rkey];
+    const decided = dec && dec.choice;
+    return `
+    <div class="dupe-card${decided ? ' decided' : ''}" data-key="${esc(rkey)}">
+      <div class="dupe-card-header">
+        <span class="method-badge ${mtype}">${esc(r['Match Method']||'')}</span>
+        ${score}
+        <span class="dupe-num">#${i+1}</span>
+      </div>
+      <div class="dupe-files">
+        ${filePanel(r, 'A')}
+        ${filePanel(r, 'B')}
+      </div>
+      <div class="decision-row">
+        <span class="decision-label">Keep:</span>
+        <button class="dec-btn keep-a${dec?.choice==='A'?' active':''}" onclick="decide('${esc(rkey)}','A','${esc(r['File A - Full Path']||'')}')">File A</button>
+        <button class="dec-btn keep-b${dec?.choice==='B'?' active':''}" onclick="decide('${esc(rkey)}','B','${esc(r['File B - Full Path']||'')}')">File B</button>
+        <button class="dec-btn keep-both${dec?.choice==='both'?' active':''}" onclick="decide('${esc(rkey)}','both','')">Keep both</button>
+        <button class="dec-btn skip${dec?.choice==='skip'?' active':''}" onclick="decide('${esc(rkey)}','skip','')">Skip</button>
+        ${decided ? `<span class="decided-badge">✓ ${dec.choice==='A'?'File A':dec.choice==='B'?'File B':dec.choice}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderGroups() {
+  const gs    = getFilteredGroups();
+  const list  = document.getElementById('group-list');
+  const noRes = document.getElementById('no-results');
+  document.getElementById('result-count').textContent =
+    `Showing ${gs.length.toLocaleString()} of ${groups.length.toLocaleString()} unique songs`;
+
+  if (!gs.length) { list.innerHTML = ''; noRes.style.display = 'block'; return; }
+  noRes.style.display = 'none';
+
+  list.innerHTML = gs.map((g, i) => {
+    const mtype  = methodType(g.method);
+    const dec    = decisions[g.key];
+    const decided = dec && dec.choice;
+    const keepPaths = dec?.keepPaths || [];
+
+    const fileRows = g.files.map((f, fi) => {
+      const isKept = keepPaths.includes(f.fullPath);
+      const chips  = [f.size, f.bitrate, f.duration].filter(Boolean)
+        .map(v => `<span class="gf-chip">${esc(v)}</span>`).join('');
+      return `
+      <div class="group-file">
+        <div>
+          <div class="gf-name">${esc(f.filename)}</div>
+          <div class="gf-folder">${esc(f.topFolder)}</div>
+          ${f.artist || f.title ? `<div class="gf-path" style="color:#475569">${esc([f.artist,f.title].filter(Boolean).join(' — '))}</div>` : ''}
+          <div class="gf-path" title="${esc(f.fullPath)}">${esc(f.fullPath.length>70?'…'+f.fullPath.slice(-68):f.fullPath)}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${chips}</div>
+        <button class="group-keep-btn${isKept?' active':''}"
+          onclick="groupKeep('${esc(g.key)}','${esc(f.fullPath)}',${g.files.length})">
+          ${isKept ? '✓ Keeping' : 'Keep'}
+        </button>
+      </div>`;
+    }).join('');
+
+    return `
+    <div class="group-card${decided?' decided':''}" data-gkey="${esc(g.key)}">
+      <div class="group-card-header">
+        <span class="method-badge ${mtype}">${esc(g.method||'')}</span>
+        <span class="group-title">${esc(g.label)}</span>
+        <span class="group-count">${g.files.length} copies</span>
+        <span class="group-num">#${i+1}</span>
+      </div>
+      <div class="group-files">${fileRows}</div>
+      <div class="group-decision-row">
+        <span class="decision-label" style="font-size:11px;color:#374151">Mark kept copies above, then:</span>
+        <button class="group-skip-btn${dec?.choice==='skip'?' active':''}"
+          onclick="groupDecide('${esc(g.key)}','skip')">Skip group</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DECISION TRACKING
+// ═══════════════════════════════════════════════════════════════
+function rowKey(r) {
+  return [r['File A - Full Path'], r['File B - Full Path']].sort().join('||');
+}
+
+function decide(key, choice, keepPath) {
+  decisions[key] = { choice, keepPath };
+  render();
+  toast(`Decision: ${choice}`);
+}
+
+function groupKeep(gkey, path, total) {
+  if (!decisions[gkey]) decisions[gkey] = { choice: 'keep', keepPaths: [] };
+  const kp = decisions[gkey].keepPaths;
+  const idx = kp.indexOf(path);
+  if (idx >= 0) kp.splice(idx, 1);
+  else kp.push(path);
+  if (kp.length === 0) delete decisions[gkey];
+  render();
+}
+
+function groupDecide(gkey, choice) {
+  if (choice === 'skip') {
+    decisions[gkey] = { choice: 'skip', keepPaths: [] };
+  }
+  render();
+}
+
+function clearDecisions() {
+  decisions = {};
+  render();
+  toast('Decisions cleared');
+}
+
+function updateDecisionPanel() {
+  const total   = currentView === 'pairs' ? allRows.length : groups.length;
+  const decided = Object.keys(decisions).length;
+  document.getElementById('dp-decided').textContent = decided;
+  document.getElementById('dp-pending').textContent = total - decided;
+  document.getElementById('dp-download').disabled   = decided === 0;
+  document.getElementById('decision-panel').classList.toggle('hidden', total === 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DOWNLOAD DECISIONS CSV
+// ═══════════════════════════════════════════════════════════════
+function downloadDecisions() {
+  const lines = ['Decision,Keep Path,Remove Path,File A Path,File B Path,Match Method'];
+
+  if (currentView === 'pairs') {
+    allRows.forEach(r => {
+      const key = rowKey(r);
+      const dec = decisions[key];
+      const pa  = r['File A - Full Path'] || '';
+      const pb  = r['File B - Full Path'] || '';
+      const method = r['Match Method'] || '';
+      if (!dec) {
+        lines.push(csvRow(['pending', '', '', pa, pb, method]));
+      } else if (dec.choice === 'A') {
+        lines.push(csvRow(['keep A', pa, pb, pa, pb, method]));
+      } else if (dec.choice === 'B') {
+        lines.push(csvRow(['keep B', pb, pa, pa, pb, method]));
+      } else {
+        lines.push(csvRow([dec.choice, '', '', pa, pb, method]));
+      }
+    });
+  } else {
+    groups.forEach(g => {
+      const dec = decisions[g.key];
+      const allPaths = g.files.map(f => f.fullPath);
+      if (!dec) {
+        g.files.forEach(f => lines.push(csvRow(['pending', '', '', f.fullPath, '', g.method])));
+      } else if (dec.choice === 'skip') {
+        g.files.forEach(f => lines.push(csvRow(['skip', '', '', f.fullPath, '', g.method])));
+      } else {
+        const keep   = dec.keepPaths || [];
+        const remove = allPaths.filter(p => !keep.includes(p));
+        keep.forEach(p   => lines.push(csvRow(['keep',   p, remove.join('; '), p, '', g.method])));
+        remove.forEach(p => lines.push(csvRow(['remove', keep.join('; '), p, p, '', g.method])));
+      }
+    });
+  }
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `library_dupes_decisions.csv`;
+  a.click();
+  toast('Downloaded!');
+}
+
+function csvRow(cells) {
+  return cells.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+function filePanel(r, side) {
+  const fn    = r[`File ${side} - Filename`]   || '';
+  const topF  = r[`File ${side} - Top Folder`] || '';
+  const folder= r[`File ${side} - Folder`]     || '';
+  const size  = r[`File ${side} - Size`]       || '';
+  const br    = r[`File ${side} - Bitrate`]    || '';
+  const dur   = r[`File ${side} - Duration`]   || '';
+  const title = r[`File ${side} - Title`]      || '';
+  const artist= r[`File ${side} - Artist`]     || '';
+  const album = r[`File ${side} - Album`]      || '';
+  const path  = r[`File ${side} - Full Path`]  || '';
+  const chips = [size, br, dur].filter(Boolean).map(v => `<span class="meta-chip">${esc(v)}</span>`).join('');
+  const tags  = [artist, title, album].filter(Boolean).join(' · ');
+  const subFolder = folder !== topF ? folder.replace(topF, '').replace(/^[/\\]/, '') : '';
+  return `
+  <div class="dupe-file">
+    <div class="dupe-file-label">File ${side}</div>
+    <div class="dupe-filename">${esc(fn)}</div>
+    <div class="dupe-folder">${esc(topF)}${subFolder ? ' / ' + esc(subFolder) : ''}</div>
+    <div class="dupe-meta">${chips}</div>
+    ${tags ? `<div class="dupe-tags">${esc(tags)}</div>` : ''}
+    <div class="dupe-path" title="${esc(path)}">${esc(path.length>70?'…'+path.slice(-68):path)}</div>
+  </div>`;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RESET
+// ═══════════════════════════════════════════════════════════════
+function resetFilters() {
+  activeMethods.clear();
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('inactive'));
+  document.getElementById('search').value = '';
+  searchTerm = ''; sortSel = 'method'; sortDir = 'asc';
+  document.getElementById('sort-sel').value = 'method';
+  document.getElementById('sort-dir').value = 'asc';
+  render();
+}
+
+function resetViewer() {
+  allRows = []; groups = []; activeMethods.clear(); searchTerm = '';
+  sortSel = 'method'; sortDir = 'asc'; decisions = {}; currentView = 'pairs';
+  document.getElementById('drop-zone').style.display = 'block';
+  document.getElementById('app').style.display       = 'none';
+  document.getElementById('load-new').style.display  = 'none';
+  document.getElementById('header-file').textContent = '';
+  document.getElementById('file-input').value        = '';
+  setView('pairs');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  EVENTS
+// ═══════════════════════════════════════════════════════════════
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+document.getElementById('search').addEventListener('input',   e => { searchTerm = e.target.value; render(); });
+document.getElementById('sort-sel').addEventListener('change', e => { sortSel = e.target.value; render(); });
+document.getElementById('sort-dir').addEventListener('change', e => { sortDir = e.target.value; render(); });
+</script>
+</body>
+</html>

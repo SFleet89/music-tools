@@ -1,0 +1,28 @@
+# ── Build both caches (default — incremental, skips unchanged files) ──
+python build_fp_cache.py
+
+# ── Build one cache at a time ──
+python build_fp_cache.py --metadata-only     # metadata cache only
+python build_fp_cache.py --fp-only           # fingerprint cache only
+
+# ── Full rebuild (wipe existing cache and start fresh) ──
+python build_fp_cache.py --rebuild           # rebuild both
+python build_fp_cache.py --metadata-only --rebuild
+python build_fp_cache.py --fp-only --rebuild
+
+# ── Override settings ──
+python build_fp_cache.py --path "C:\Music\Organized"   # override folder path
+python build_fp_cache.py --config other.json            # use a different config file
+python build_fp_cache.py --threads 4                    # override thread count
+
+# ── Combinations ──
+python build_fp_cache.py --fp-only --rebuild --threads 8
+python build_fp_cache.py --metadata-only --path "C:\Music\New Additions"
+python build_fp_cache.py --rebuild --config other.json
+
+# ── Recommended: run before a duplicate scan to warm both caches ──
+# Step 1 — build caches (first run will be slow for fingerprints)
+python build_fp_cache.py
+
+# Step 2 — run duplicate finder (cache is warm, scan is fast)
+python find_music_duplicates.py --dry-run --no-review
