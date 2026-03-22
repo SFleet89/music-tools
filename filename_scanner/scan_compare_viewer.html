@@ -124,6 +124,7 @@
   <h1>Scan Comparison Viewer</h1>
   <span id="header-dates"></span>
   <button id="load-new" class="header-btn" style="display:none" onclick="resetViewer()">⟳ Load new scans</button>
+  <button id="export-btn" style="display:none;background:none;border:1px solid #2d3148;border-radius:8px;color:#6366f1;cursor:pointer;font-size:13px;padding:6px 14px;margin-left:8px" onclick="exportCSV()">⬇ Export CSV</button>
 </header>
 
 <!-- Load screen -->
@@ -435,6 +436,7 @@ function resetViewer() {
   document.getElementById('load-screen').style.display = 'block';
   document.getElementById('app').style.display = 'none';
   document.getElementById('load-new').style.display = 'none';
+  document.getElementById('export-btn').style.display = 'none';
   document.getElementById('header-dates').textContent = '';
   document.getElementById('compare-btn').disabled = true;
   ['old','new'].forEach(slot => {
@@ -471,6 +473,39 @@ function toast(msg) {
 document.getElementById('search').addEventListener('input', e => { searchTerm = e.target.value; render(); });
 document.getElementById('sort-col').addEventListener('change', e => { sortCol = e.target.value; render(); });
 document.getElementById('sort-dir').addEventListener('change', e => { sortDir = e.target.value; render(); });
+
+function exportCSV() {
+  if (!results.length) return;
+  const headers = ['status', 'folder', 'filename', 'full_path', 'old_issues', 'new_issues'];
+  const esc = v => {
+    v = String(v ?? '');
+    if (v.includes(',') || v.includes('"') || v.includes('\n') || v.includes('\r')) {
+      return '"' + v.replace(/"/g, '""') + '"';
+    }
+    return v;
+  };
+  const lines = [
+    headers.map(esc).join(','),
+    ...results.map(r => [
+      r.status || '',
+      r.folder || '',
+      r.filename || '',
+      r.fullPath || '',
+      (r.oldIssues || []).join('; '),
+      (r.newIssues || []).join('; '),
+    ].map(esc).join(','))
+  ];
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const ts = new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
+  a.download = 'scan_comparison_export_' + ts + '.csv';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 </script>
 </body>
 </html>
