@@ -4,6 +4,25 @@ All notable changes to the Album Folder Renamer are documented here.
 
 ---
 
+## [2.2] - 2026-03-19
+
+### Fixed
+- **Multi-CD detection not working** — the CD parent folder was not being detected in practice because `rglob` was visiting CD subfolders (CD1, CD2) before their parent. This caused the script to add each CD subfolder as an individual rename candidate, producing collision errors (three folders all trying to rename to "Best of Bonkers"). Fixed by sorting all directories by depth before processing, ensuring parents are always evaluated before their children. The parent is now correctly identified and renamed, and the CD subfolders are left untouched.
+
+---
+
+## [2.1] - 2026-03-15
+
+### Added
+- **Multi-CD album support** — folders that contain only CD/Disc/Disk subfolders (e.g. `CD1`, `CD 2`, `Disc1`) are now detected as multi-CD albums. The **parent folder** is renamed to match the album tag, and the individual CD subfolders are left untouched. Previously the script would try to rename the CD subfolders themselves and ignore the parent entirely.
+- **Multi-CD column in report** — the CSV report now includes a `Multi-CD` column (`Yes`/`No`) so you can see at a glance which folders were handled as multi-disc albums.
+- **Multi-CD label in preview** — the console dry-run preview shows `(multi-CD: N discs)` next to any folder detected as a multi-CD parent.
+
+### Changed
+- `find_album_folders()` now performs a two-pass check per folder: first looking for CD subfolders (multi-CD structure), then falling back to direct music file detection (normal structure). CD subfolders that belong to a detected parent are excluded from the candidate list to prevent double-processing.
+
+---
+
 ## [2.0] - 2026-03-14
 
 ### Added

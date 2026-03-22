@@ -1,4 +1,10 @@
-# Album Folder Renamer
+# Utilities
+
+Standalone batch rename scripts for common music library housekeeping tasks.
+
+---
+
+## rename_album_folders.py
 
 Reads the album tag from music files inside each subfolder and renames the folder to match. Works at any depth — flat libraries, Artist/Album structures, or anything in between.
 
@@ -6,7 +12,7 @@ Nothing is renamed until you confirm. Dry run by default.
 
 ---
 
-## How it works
+### How it works
 
 For each folder that contains music files directly inside it, the script reads the album tag from every file and determines the correct folder name. It handles three cases:
 
@@ -18,7 +24,7 @@ Before any renaming happens, the script checks for cross-folder collisions — t
 
 ---
 
-## Requirements
+### Requirements
 
 ```
 pip install mutagen
@@ -28,7 +34,7 @@ pip install mutagen
 
 ---
 
-## Usage
+### Usage
 
 ```
 python rename_album_folders.py                       # dry run on default folder
@@ -50,7 +56,7 @@ python rename_album_folders.py --path "C:\Music" --filter --depth 2 --apply
 
 ---
 
-## Flags
+### Flags
 
 | Flag | Description |
 |---|---|
@@ -62,7 +68,7 @@ python rename_album_folders.py --path "C:\Music" --filter --depth 2 --apply
 
 ---
 
-## Recommended workflow
+### Recommended workflow
 
 ```
 # Step 1 — dry run to preview what would change
@@ -76,7 +82,7 @@ On large libraries, `--filter` and `--depth` together make the scan significantl
 
 ---
 
-## Conflict resolution
+### Conflict resolution
 
 When files inside a folder have different album tags, the script prompts you interactively:
 
@@ -107,7 +113,7 @@ Enter the number of the album you want to use, `s` to skip, or `t` to type a cus
 
 ---
 
-## Collision detection
+### Collision detection
 
 If two folders in the same parent directory would rename to the same name, both are flagged and skipped with a warning before any renaming happens:
 
@@ -120,7 +126,7 @@ If two folders in the same parent directory would rename to the same name, both 
 
 ---
 
-## Output
+### Output
 
 Every run saves a timestamped CSV to your reports folder:
 
@@ -129,7 +135,7 @@ Every run saves a timestamped CSV to your reports folder:
 | `rename_album_folders_dry_TIMESTAMP.csv` | Dry run preview |
 | `rename_album_folders_applied_TIMESTAMP.csv` | Results of a live run |
 
-### CSV columns
+#### CSV columns
 
 | Column | Description |
 |---|---|
@@ -139,6 +145,27 @@ Every run saves a timestamped CSV to your reports folder:
 | Album Tag | Album tag read from the files |
 | Status | What happened (renamed, already correct, skipped, error, etc.) |
 | Files | Number of music files in the folder |
+
+---
+
+## rename_cd_folders.py
+
+Removes the space between CD and number in folder names.
+
+```
+CD 1  →  CD1
+CD 2  →  CD2
+CD 10 →  CD10
+```
+
+### Usage
+
+```
+python rename_cd_folders.py                        # dry run — shows what would be renamed
+python rename_cd_folders.py --apply                # rename for real
+python rename_cd_folders.py --path "C:\Music"      # scan a specific folder
+python rename_cd_folders.py --apply --path "C:\Music"
+```
 
 ---
 
@@ -152,6 +179,8 @@ MP3, FLAC, AAC, M4A
 
 | File | Description |
 |---|---|
-| `rename_album_folders.py` | Main script |
-| `Rename_Album_Folders_Run_Commands.txt` | Quick reference for all commands |
-| `reports\rename_album_folders_*.csv` | Per-run reports |
+| `rename_album_folders.py` | Rename folders to match album tag |
+| `rename_cd_folders.py` | Remove space in CD folder names |
+| `Rename_Album_Folders_Run_Commands.txt` | Quick reference for rename_album_folders commands |
+| `CHANGELOG_rename_album_folders.md` | Version history for rename_album_folders |
+| `reports\` | Per-run CSV reports |

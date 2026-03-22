@@ -1,0 +1,20 @@
+# ── Single album folder (folder picker opens) ──
+python sort_cd_tracks.py                    # dry run
+python sort_cd_tracks.py --apply            # move for real
+
+# ── Single album folder (specific path) ──
+python sort_cd_tracks.py --path "C:\Music\Artist\Album"
+python sort_cd_tracks.py --path "C:\Music\Artist\Album" --apply
+
+# ── All albums in a root folder ──
+python sort_cd_tracks.py --recursive                              # dry run, picker opens
+python sort_cd_tracks.py --recursive --apply                      # sort all for real
+python sort_cd_tracks.py --recursive --path "C:\Music\Organized"
+python sort_cd_tracks.py --recursive --path "C:\Music\Organized" --apply
+
+# ── Recommended workflow ──
+# Step 1 — dry run on your whole library to see what would be sorted
+python sort_cd_tracks.py --recursive
+
+# Step 2 — sort for real
+python sort_cd_tracks.py --recursive --apply

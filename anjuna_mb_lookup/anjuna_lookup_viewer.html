@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anjuna MusicBrainz Lookup Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+  header { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 17px; font-weight: 600; color: #fff; }
+  header span { font-size: 13px; color: #64748b; }
+  #drop-zone { margin: 60px auto; max-width: 500px; border: 2px dashed #2d3148; border-radius: 12px; padding: 56px 32px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+  #drop-zone:hover, #drop-zone.drag-over { border-color: #6366f1; background: #1a1d2e; }
+  #drop-zone svg { margin-bottom: 16px; opacity: 0.4; }
+  #drop-zone p { color: #94a3b8; font-size: 14px; line-height: 1.7; }
+  #drop-zone strong { color: #e2e8f0; }
+  #file-input { display: none; }
+  #app { display: none; padding: 20px 24px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
+  input[type=text], select { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; color: #e2e8f0; padding: 8px 12px; font-size: 13px; outline: none; }
+  input[type=text] { width: 280px; }
+  input[type=text]:focus, select:focus { border-color: #6366f1; }
+  .btn { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; color: #94a3b8; padding: 8px 14px; font-size: 13px; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+  .btn:hover { color: #e2e8f0; border-color: #6366f1; }
+  .stats { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .stat-pill { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 20px; padding: 5px 14px; font-size: 12px; display: flex; align-items: center; gap: 7px; cursor: pointer; transition: border-color 0.15s; white-space: nowrap; }
+  .stat-pill:hover { border-color: #6366f1; }
+  .stat-pill.active { border-color: #6366f1; background: #1e2044; }
+  .stat-pill .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .stat-pill .count { font-weight: 600; color: #fff; }
+  .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid #2d3148; max-height: calc(100vh - 300px); overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: #1a1d2e; color: #94a3b8; font-weight: 500; padding: 10px 14px; text-align: left; white-space: nowrap; cursor: pointer; user-select: none; border-bottom: 1px solid #2d3148; position: sticky; top: 0; z-index: 1; }
+  thead th:hover { color: #e2e8f0; }
+  thead th.sorted { color: #a5b4fc; }
+  .sort-icon { margin-left: 4px; opacity: 0.35; font-size: 10px; }
+  thead th.sorted .sort-icon { opacity: 1; }
+  tbody tr { border-bottom: 1px solid #181c28; transition: background 0.1s; }
+  tbody tr:hover { background: #1a1d2e; }
+  tbody td { padding: 9px 14px; vertical-align: top; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tbody td.mono { font-family: "Consolas","Courier New",monospace; font-size: 11px; color: #94a3b8; }
+  tbody td.note { font-size: 11px; color: #64748b; font-style: italic; white-space: normal; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+  .badge-matched      { background: #14532d; color: #86efac; }
+  .badge-auto_matched { background: #1e3a5f; color: #93c5fd; }
+  .badge-review       { background: #78350f; color: #fcd34d; }
+  .badge-not_found    { background: #3b0764; color: #d8b4fe; }
+  .badge-no_catno     { background: #1f2937; color: #6b7280; }
+  .badge-error        { background: #450a0a; color: #fca5a5; }
+  .mbid-link { color: #818cf8; text-decoration: none; font-family: monospace; font-size: 11px; }
+  .mbid-link:hover { text-decoration: underline; }
+  .score-bar { display: inline-flex; align-items: center; gap: 6px; }
+  .score-bar .bar { width: 48px; height: 6px; border-radius: 3px; background: #1f2937; overflow: hidden; }
+  .score-bar .fill { height: 100%; border-radius: 3px; }
+  .score-num { font-size: 11px; color: #94a3b8; min-width: 24px; text-align: right; }
+  .expand-btn { background: none; border: 1px solid #2d3148; border-radius: 6px; color: #6366f1; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+  .expand-btn:hover { background: #1a1d2e; }
+  .candidates-row td { padding: 0; background: #13162a; border-bottom: 1px solid #2d3148; }
+  .candidates-inner { padding: 10px 16px 12px 32px; font-size: 12px; }
+  .candidates-inner table { width: 100%; margin-top: 6px; border-collapse: collapse; }
+  .candidates-inner td { padding: 5px 10px; border-bottom: 1px solid #1e2235; vertical-align: top; white-space: normal; max-width: none; }
+  .candidates-inner tr:last-child td { border-bottom: none; }
+  .c-mbid { font-family: monospace; font-size: 11px; color: #818cf8; white-space: nowrap; }
+  .c-catno { color: #fcd34d; font-size: 11px; white-space: nowrap; }
+  .c-score { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+  .use-btn { background: #1e3a5f; border: 1px solid #3b5fa0; border-radius: 5px; color: #93c5fd; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+  .use-btn:hover { background: #2a4f80; }
+  .no-results { text-align: center; padding: 56px; color: #4b5563; font-size: 14px; }
+  .footer { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #4b5563; }
+  #load-new { background: none; border: none; color: #6366f1; cursor: pointer; font-size: 13px; margin-left: auto; }
+  #load-new:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#6366f1" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+  </svg>
+  <h1>Anjuna MusicBrainz Lookup Viewer</h1>
+  <span id="header-file"></span>
+  <button id="load-new" style="display:none" onclick="resetViewer()">← Load different file</button>
+</header>
+
+<div id="drop-zone" onclick="document.getElementById('file-input').click()">
+  <svg width="44" height="44" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586 a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+  </svg>
+  <p><strong>Drop your anjuna_lookup CSV here</strong><br>or click to browse</p>
+  <input type="file" id="file-input" accept=".csv">
+</div>
+
+<div id="app">
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search folder, catno, title, artist…">
+    <select id="filter-status"><option value="">All statuses</option></select>
+    <button class="btn" onclick="clearFilters()">Clear filters</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="table-wrap">
+    <table><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+  </div>
+  <div class="footer"><span id="row-count"></span></div>
+</div>
+
+<script>
+let allRows = [], sortCol = null, sortAsc = true, expandedRows = new Set();
+
+const STATUS_CFG = {
+  matched:      { label: 'Matched',      dot: '#86efac' },
+  auto_matched: { label: 'Auto-matched', dot: '#93c5fd' },
+  review:       { label: 'Needs review', dot: '#fcd34d' },
+  not_found:    { label: 'Not found',    dot: '#d8b4fe' },
+  no_catno:     { label: 'No catno',     dot: '#6b7280' },
+  error:        { label: 'Error',        dot: '#fca5a5' },
+};
+
+const COLS = [
+  { key: 'folder',          label: 'Folder' },
+  { key: 'extracted_catno', label: 'Catno' },
+  { key: 'status',          label: 'Status' },
+  { key: 'mb_title',        label: 'MB Title' },
+  { key: 'mb_artist',       label: 'Artist' },
+  { key: 'mb_date',         label: 'Year' },
+  { key: 'mb_catnos',       label: 'MB Catnos' },
+  { key: 'combined_score',  label: 'Score' },
+  { key: 'track_match_pct', label: 'Track Match' },
+  { key: 'count_match',     label: 'Tracks' },
+  { key: 'mbid',            label: 'MBID' },
+  { key: 'notes',           label: 'Notes' },
+  { key: '_candidates',     label: 'Candidates' },
+];
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/), headers = splitLine(lines[0]), rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = splitLine(lines[i]), row = {};
+    headers.forEach((h, j) => { row[h.trim()] = (vals[j] || '').trim(); });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function splitLine(line) {
+  const out = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur); return out;
+}
+
+function parseCandidates(str) {
+  if (!str) return [];
+  return str.split('||').map(part => {
+    const [mbid, label, catnos, scores] = part.split('|');
+    return { mbid: mbid||'', label: label||'', catnos: catnos||'', scores: scores||'' };
+  }).filter(c => c.mbid);
+}
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s) { return (s||'').replace(/'/g,"\\'"); }
+
+function scoreBar(val) {
+  const n = parseInt(val) || 0;
+  const color = n >= 80 ? '#22c55e' : n >= 50 ? '#f59e0b' : '#ef4444';
+  return '<div class="score-bar"><div class="bar"><div class="fill" style="width:' + n + '%;background:' + color + '"></div></div>' +
+    '<span class="score-num">' + (val||'—') + '</span></div>';
+}
+
+function statusBadge(s) {
+  return '<span class="badge badge-' + s + '">' + ((STATUS_CFG[s]||{}).label || s) + '</span>';
+}
+
+function mbidCell(mbid) {
+  if (!mbid) return '<span style="color:#374151">—</span>';
+  return '<a class="mbid-link" href="https://musicbrainz.org/release/' + mbid + '" target="_blank">' + mbid.substring(0,8) + '…</a>';
+}
+
+function tracksCell(r) {
+  const local = r['local_tracks'] || '?', mb = r['mb_tracks'] || '?';
+  const match = r['count_match'];
+  const color = match === 'True' ? '#86efac' : match === 'False' ? '#fca5a5' : '#94a3b8';
+  return '<span style="color:' + color + ';font-size:11px">' + local + ' / ' + mb + '</span>';
+}
+
+function candidatesBtn(idx, candidates) {
+  if (!candidates.length) return '—';
+  const exp = expandedRows.has(idx);
+  return '<button class="expand-btn" onclick="toggleCandidates(' + idx + ')">' + (exp ? '▲ Hide' : '▼ Show ' + candidates.length) + '</button>';
+}
+
+function candidatesPanel(idx, candidates, colCount) {
+  if (!candidates.length || !expandedRows.has(idx)) return '';
+  let html = '<tr class="candidates-row"><td colspan="' + colCount + '"><div class="candidates-inner"><table>';
+  html += '<tr style="color:#64748b;font-size:11px"><td>MBID</td><td>Title / Artist / Date</td><td>Catalogue Numbers</td><td>Scores</td><td></td></tr>';
+  candidates.forEach(c => {
+    html += '<tr>';
+    html += '<td class="c-mbid"><a class="mbid-link" href="https://musicbrainz.org/release/' + c.mbid + '" target="_blank">' + c.mbid + '</a></td>';
+    html += '<td>' + escHtml(c.label) + '</td>';
+    html += '<td class="c-catno">' + escHtml(c.catnos) + '</td>';
+    html += '<td class="c-score">' + escHtml(c.scores) + '</td>';
+    html += '<td><button class="use-btn" onclick="selectMbid(' + idx + ',\'' + c.mbid + '\',\'' + escAttr(c.label) + '\',\'' + escAttr(c.catnos) + '\')">Use this</button></td>';
+    html += '</tr>';
+  });
+  html += '</table></div></td></tr>';
+  return html;
+}
+
+function getFiltered() {
+  const search = document.getElementById('search').value.toLowerCase();
+  const statusF = document.getElementById('filter-status').value;
+  return allRows.filter(r => {
+    if (statusF && r['status'] !== statusF) return false;
+    if (search) {
+      const hay = [r['folder'],r['extracted_catno'],r['searched_catno'],r['mb_title'],r['mb_artist'],r['mb_catnos'],r['mbid'],r['notes']].join(' ').toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+function buildHeader() {
+  const tr = document.createElement('tr');
+  COLS.forEach(col => {
+    const th = document.createElement('th');
+    if (col.key === '_candidates') { th.textContent = col.label; tr.appendChild(th); return; }
+    const sorted = sortCol === col.key;
+    if (sorted) th.classList.add('sorted');
+    th.innerHTML = col.label + '<span class="sort-icon">' + (sorted ? (sortAsc?'▲':'▼') : '⇅') + '</span>';
+    th.onclick = () => { if (sortCol===col.key) sortAsc=!sortAsc; else {sortCol=col.key;sortAsc=true;} expandedRows.clear(); render(); };
+    tr.appendChild(th);
+  });
+  document.getElementById('thead').innerHTML = '';
+  document.getElementById('thead').appendChild(tr);
+}
+
+function render() {
+  buildHeader();
+  let rows = getFiltered();
+  if (sortCol && sortCol !== '_candidates') {
+    rows = [...rows].sort((a,b) => {
+      let av=a[sortCol]||'', bv=b[sortCol]||'';
+      const an=parseFloat(av), bn=parseFloat(bv);
+      if (!isNaN(an)&&!isNaN(bn)) return sortAsc?an-bn:bn-an;
+      return sortAsc?av.localeCompare(bv):bv.localeCompare(av);
+    });
+  }
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) { tbody.innerHTML='<tr><td colspan="'+COLS.length+'" class="no-results">No rows match your filters</td></tr>'; document.getElementById('row-count').textContent='No results'; return; }
+  let html = '';
+  rows.forEach((r, idx) => {
+    const candidates = parseCandidates(r['candidates']);
+    html += '<tr>';
+    COLS.forEach(col => {
+      if (col.key==='status')          html += '<td>' + statusBadge(r['status']) + '</td>';
+      else if (col.key==='mbid')       html += '<td class="mono">' + mbidCell(r['mbid']) + '</td>';
+      else if (col.key==='combined_score' || col.key==='track_match_pct') html += '<td>' + scoreBar(r[col.key]) + '</td>';
+      else if (col.key==='count_match') html += '<td>' + tracksCell(r) + '</td>';
+      else if (col.key==='folder')     html += '<td title="' + escAttr(r['folder_path']) + '">' + escHtml(r['folder']) + '</td>';
+      else if (col.key==='notes')      html += '<td class="note">' + escHtml(r['notes']) + '</td>';
+      else if (col.key==='_candidates') html += '<td>' + candidatesBtn(idx, candidates) + '</td>';
+      else html += '<td>' + escHtml(r[col.key]||'') + '</td>';
+    });
+    html += '</tr>';
+    if (candidates.length) html += candidatesPanel(idx, candidates, COLS.length);
+  });
+  tbody.innerHTML = html;
+  tbody._rows = rows;
+  document.getElementById('row-count').textContent = 'Showing ' + rows.length.toLocaleString() + ' of ' + allRows.length.toLocaleString() + ' rows';
+}
+
+function toggleCandidates(idx) {
+  if (expandedRows.has(idx)) expandedRows.delete(idx); else expandedRows.add(idx);
+  render();
+}
+
+function selectMbid(idx, mbid, label, catnos) {
+  const row = document.getElementById('tbody')._rows[idx];
+  if (!row) return;
+  const orig = allRows.find(r => r['folder']===row['folder'] && r['folder_path']===row['folder_path']);
+  if (orig) {
+    orig['mbid'] = mbid; orig['mb_catnos'] = catnos; orig['status'] = 'matched';
+    const parts = label.split('  —  ');
+    orig['mb_title'] = parts[0]||''; orig['mb_artist'] = parts[1]||'';
+    orig['notes'] = 'Manually selected from candidates';
+  }
+  expandedRows.delete(idx); render(); buildStats();
+}
+
+function buildStats() {
+  const counts = {};
+  allRows.forEach(r => { counts[r['status']] = (counts[r['status']]||0) + 1; });
+  const container = document.getElementById('stats');
+  container.innerHTML = '';
+  const makeActive = p => { document.querySelectorAll('.stat-pill').forEach(x=>x.classList.remove('active')); p.classList.add('active'); };
+  const allPill = document.createElement('div');
+  allPill.className = 'stat-pill active';
+  allPill.innerHTML = '<span style="font-size:11px;color:#94a3b8">ALL</span><span class="count">' + allRows.length + '</span>';
+  allPill.onclick = () => { document.getElementById('filter-status').value=''; makeActive(allPill); render(); };
+  container.appendChild(allPill);
+  ['matched','auto_matched','review','not_found','no_catno','error'].forEach(s => {
+    if (!counts[s]) return;
+    const cfg = STATUS_CFG[s]||{label:s,dot:'#6b7280'};
+    const pill = document.createElement('div');
+    pill.className = 'stat-pill';
+    pill.innerHTML = '<span class="dot" style="background:'+cfg.dot+'"></span><span style="color:#94a3b8;font-size:11px">'+cfg.label+'</span><span class="count">'+counts[s]+'</span>';
+    pill.onclick = () => { document.getElementById('filter-status').value=s; makeActive(pill); render(); };
+    container.appendChild(pill);
+  });
+}
+
+function buildFilters() {
+  const uniq = key => [...new Set(allRows.map(r=>r[key]).filter(Boolean))].sort();
+  const sel = document.getElementById('filter-status');
+  const first = sel.options[0].text;
+  sel.innerHTML = '<option value="">'+first+'</option>' + uniq('status').map(v=>'<option value="'+v+'">'+(STATUS_CFG[v]||{label:v}).label+'</option>').join('');
+  sel.onchange = () => { expandedRows.clear(); render(); };
+  document.getElementById('search').oninput = () => { expandedRows.clear(); render(); };
+}
+
+function clearFilters() {
+  document.getElementById('search').value='';
+  document.getElementById('filter-status').value='';
+  document.querySelectorAll('.stat-pill').forEach(p=>p.classList.remove('active'));
+  document.querySelector('.stat-pill').classList.add('active');
+  expandedRows.clear(); render();
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    let text = e.target.result;
+    if (text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+    allRows = parseCSV(text);
+    document.getElementById('drop-zone').style.display='none';
+    document.getElementById('app').style.display='block';
+    document.getElementById('load-new').style.display='inline';
+    document.getElementById('header-file').textContent=file.name;
+    buildFilters(); buildStats(); render();
+  };
+  reader.readAsText(file,'utf-8');
+}
+
+function resetViewer() {
+  allRows=[]; sortCol=null; sortAsc=true; expandedRows.clear();
+  document.getElementById('drop-zone').style.display='block';
+  document.getElementById('app').style.display='none';
+  document.getElementById('load-new').style.display='none';
+  document.getElementById('header-file').textContent='';
+  document.getElementById('file-input').value='';
+}
+
+document.getElementById('file-input').onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); };
+const dz = document.getElementById('drop-zone');
+dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag-over'); };
+dz.ondragleave = () => dz.classList.remove('drag-over');
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag-over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+</script>
+</body>
+</html>

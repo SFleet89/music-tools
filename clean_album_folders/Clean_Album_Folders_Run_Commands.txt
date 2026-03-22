@@ -1,0 +1,24 @@
+# ── Dry run (default — safe, nothing is moved) ──
+python clean_album_folders.py
+
+# ── Clean for real ──
+python clean_album_folders.py --apply
+
+# ── Override folder path (skips the dialog) ──
+python clean_album_folders.py --path "C:\Users\neo_s\Downloads\To Move\Anjuna"
+python clean_album_folders.py --path "C:\Users\neo_s\Downloads\To Move\Anjuna" --apply
+
+# ── Recommended workflow ──
+# Step 1 — dry run to see what would be moved
+python clean_album_folders.py
+
+# Step 2 — review the report CSV in the reports folder
+# C:\Users\neo_s\Downloads\To Move\clean_album_folders\reports\
+
+# Step 3 — clean for real
+python clean_album_folders.py --apply
+
+# ── Setup (first time on a new PC) ──
+# Install Python from python.org (64-bit, tick Add Python to PATH)
+# Then run:
+pip install mutagen

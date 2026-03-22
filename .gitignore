@@ -8,12 +8,11 @@ music_fp_cache.json
 library_fp_cache.json
 music_resume.json
 
-# Reports (timestamped, personal) — exclude the folders entirely
-duplicate_finder/reports/
-filename_scanner/reports/
-library_dupes/reports/
+# Reports (timestamped, personal) — all tools
+**/reports/
+
+# library_dupes removed files folder
 library_dupes/removed/
-utilities/reports/
 
 # Python
 __pycache__/

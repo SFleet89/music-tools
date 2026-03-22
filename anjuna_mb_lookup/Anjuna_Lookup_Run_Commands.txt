@@ -1,0 +1,54 @@
+# Anjunabeats MusicBrainz Batch Lookup — Run Commands
+# =====================================================
+# Script : anjuna_mb_lookup.py
+# Viewer : anjuna_lookup_viewer.html
+# Reports: saved next to the script in:
+#          C:\Users\neo_s\Downloads\To Move\anjuna_mb_lookup\reports\
+
+# ── Basic usage (asks auto-pick vs review at runtime) ─────────────────────────
+
+python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC"
+
+# ── With mode flag (skips the prompt) ─────────────────────────────────────────
+
+python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC" --auto
+python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC" --review
+
+# ── Each batch folder separately ──────────────────────────────────────────────
+
+python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC"
+python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ101-ANJ200-FLAC"
+python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ201-ANJ345-FLAC"
+python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJCD001-ANJCD043-FLAC"
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+# - Requires: pip install mutagen
+# - Processes one batch folder at a time to respect MusicBrainz rate limits
+# - Each release: 1 search + 1 fetch per candidate = ~3-4 seconds per folder
+# - On a 100-release batch expect ~6-8 minutes
+# - Reports save to: <script folder>\reports\ (not inside the batch folder)
+# - Open the CSV in anjuna_lookup_viewer.html to review results
+# - "Needs review" rows show all candidates — click "Use this" to pick one
+
+# ── Status codes ──────────────────────────────────────────────────────────────
+# matched       Single MB result found — check score columns for confidence
+# auto_matched  Multiple results, best picked automatically (catno + metadata)
+# review        Multiple results, flagged for manual selection in the viewer
+# not_found     No MB results found (tried D, R, EP, CD, DJ variants too)
+# no_catno      Folder name doesn't contain an ANJ* catalogue number
+# error         Network error during lookup — safe to re-run, won't duplicate
+
+# ── Score columns ─────────────────────────────────────────────────────────────
+# catno_score     0-100  MB catalogue number vs folder catno (hyphens ignored)
+# meta_score      0-100  MB tracklist vs local file tags (50 if no tags yet)
+# combined_score  0-100  Weighted average: catno 60% + metadata 40%
+# track_match_pct 0-100  % of local track titles fuzzy-matched to MB tracklist
+# count_match     True/False  Local file count matches MB track count
+
+# ── What low scores mean ──────────────────────────────────────────────────────
+# catno_score=0, meta_score=100  ->  correct match, MB uses different hyphenation
+#                                    (fixed in v1.2 — should no longer occur)
+# meta_score=50, title match=0%  ->  files have no title tags yet (expected
+#                                    before Picard tagging — match is still valid)
+# count_match=False              ->  could be a promo/bonus track version,
+#                                    or a remix release matched to the wrong entry

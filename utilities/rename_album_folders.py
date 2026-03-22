@@ -49,7 +49,7 @@ except ImportError:
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\filename_scanner\reports"
+REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\rename_album\reports"
 SUPPORTED_EXT   = {".mp3", ".flac", ".aac", ".m4a"}
 
 # ── Parse flags ────────────────────────────────────────────────────────────────
@@ -105,6 +105,56 @@ def folder_depth(folder: Path, root: Path) -> int:
     except ValueError:
         return 0
 
+
+
+
+# Matches CD/Disc/Disk subfolder names: CD1, CD 1, Disc2, Disk 10 etc.
+_CD_RE = re.compile(r'^(cd|disc|disk)\s*\d+$', re.IGNORECASE)
+
+
+def get_cd_subfolders(folder: Path) -> list[Path]:
+    """
+    If ALL subdirectories of folder match the CD/Disc/Disk pattern, return
+    them sorted. Otherwise return an empty list.
+    Only triggers when every subdir looks like a disc folder — prevents false
+    positives on folders with one oddly-named subfolder.
+    """
+    try:
+        subdirs = [d for d in folder.iterdir() if d.is_dir()]
+    except Exception:
+        return []
+    if not subdirs:
+        return []
+    cd_dirs = [d for d in subdirs if _CD_RE.match(d.name)]
+    return sorted(cd_dirs) if len(cd_dirs) == len(subdirs) else []
+
+
+def get_album_for_cd_parent(folder: Path) -> tuple[str | None, str, list[dict]]:
+    """
+    Read album tags from all music files across all CD subfolders combined.
+    Returns same (album, status, file_tags) signature as get_album_for_folder.
+    """
+    cd_dirs = get_cd_subfolders(folder)
+    if not cd_dirs:
+        return None, "no_files", []
+
+    all_file_tags = []
+    for cd in cd_dirs:
+        for f in get_music_files(cd):
+            tags = read_file_tags(f)
+            all_file_tags.append({"file": f, **tags})
+
+    if not all_file_tags:
+        return None, "empty", all_file_tags
+
+    albums = [t["album"] for t in all_file_tags if t["album"]]
+    if not albums:
+        return None, "empty", all_file_tags
+
+    counts = Counter(albums)
+    if len(counts) == 1:
+        return counts.most_common(1)[0][0], "ok", all_file_tags
+    return None, "conflict", all_file_tags
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  ALBUM DETECTION
@@ -194,13 +244,29 @@ def prompt_conflict(folder: Path, file_tags: list[dict]) -> str | None:
 
 def find_album_folders(root: Path) -> list[dict]:
     """
-    Walk tree, find folders with music files directly inside.
+    Walk tree, find folders to rename. Handles two structures:
+      1. Normal: folder contains music files directly
+      2. Multi-CD: folder contains only CD1/CD2/Disc1/Disc2 subfolders
+
+    For multi-CD folders the PARENT is renamed — the CD subfolders are left
+    untouched. Traversal is depth-first (shallow before deep) so parents are
+    always evaluated before their children, which is required for correct
+    multi-CD detection.
+
     Respects MAX_DEPTH and FILTER_OK flags.
     """
-    candidates = []
+    # Collect all subdirectories, sorted shallowest-first so parents are
+    # always visited before their children.
+    all_dirs = sorted(
+        (d for d in root.rglob("*") if d.is_dir()),
+        key=lambda d: len(d.parts)
+    )
 
-    for folder in sorted(root.rglob("*")):
-        if not folder.is_dir():
+    candidates  = []
+    skip_folders: set[Path] = set()   # CD subfolders claimed by a parent
+
+    for folder in all_dirs:
+        if folder in skip_folders:
             continue
 
         # Depth filter
@@ -208,22 +274,49 @@ def find_album_folders(root: Path) -> list[dict]:
             if folder_depth(folder, root) != MAX_DEPTH:
                 continue
 
+        try:
+            rel = str(folder.relative_to(root))
+        except ValueError:
+            rel = str(folder)
+
+        # ── Multi-CD check: does this folder contain only CD subfolders? ──
+        cd_dirs = get_cd_subfolders(folder)
+        if cd_dirs:
+            # Mark all CD subfolders so they are skipped later
+            for cd in cd_dirs:
+                skip_folders.add(cd)
+
+            album, status, file_tags = get_album_for_cd_parent(folder)
+
+            if FILTER_OK and status == "ok" and album:
+                if sanitise_folder_name(album) == folder.name:
+                    continue
+
+            all_files = [t["file"] for t in file_tags]
+            candidates.append({
+                "folder":    folder,
+                "rel":       rel,
+                "status":    status,
+                "album":     album,
+                "file_tags": file_tags,
+                "files":     all_files,
+                "current":   folder.name,
+                "new_name":  None,
+                "multi_cd":  True,
+                "cd_dirs":   cd_dirs,
+            })
+            continue
+
+        # ── Normal check: does this folder contain music files directly? ──
         files = get_music_files(folder)
         if not files:
             continue
 
         album, status, file_tags = get_album_for_folder(folder)
 
-        try:
-            rel = str(folder.relative_to(root))
-        except ValueError:
-            rel = str(folder)
-
-        # --filter: skip folders already correctly named
-        if FILTER_OK and status == "ok":
-            new_name = sanitise_folder_name(album)
-            if new_name == folder.name:
-                continue  # already correct, nothing to do
+        if FILTER_OK and status == "ok" and album:
+            if sanitise_folder_name(album) == folder.name:
+                continue
 
         candidates.append({
             "folder":    folder,
@@ -234,6 +327,7 @@ def find_album_folders(root: Path) -> list[dict]:
             "files":     files,
             "current":   folder.name,
             "new_name":  None,
+            "multi_cd":  False,
         })
 
     return candidates
@@ -290,7 +384,7 @@ def write_report(candidates: list[dict], reports_dir: Path, dry_run: bool):
         out_path  = reports_dir / f"rename_album_folders_{suffix}_{timestamp}.csv"
 
         fieldnames = ["Relative Path", "Current Name", "New Name",
-                      "Album Tag", "Status", "Files"]
+                      "Album Tag", "Status", "Files", "Multi-CD"]
         rows = []
         for c in candidates:
             album    = c.get("album") or ""
@@ -318,6 +412,7 @@ def write_report(candidates: list[dict], reports_dir: Path, dry_run: bool):
                 "Album Tag":     album,
                 "Status":        label,
                 "Files":         len(c.get("files", [])),
+                "Multi-CD":      "Yes" if c.get("multi_cd") else "No",
             })
 
         with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
@@ -454,7 +549,8 @@ def main():
               + (" (dry run):" if DRY_RUN else ":"))
         print()
         for c in to_rename:
-            print(f"  [{c['rel']}]")
+            cd_note = f"  ← multi-CD ({len(c.get('cd_dirs', []))} discs)" if c.get("multi_cd") else ""
+            print(f"  [{c['rel']}]{cd_note}")
             print(f"    Before : {c['current']}")
             print(f"    After  : {c['new_name']}")
             print()

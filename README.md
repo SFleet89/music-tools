@@ -15,6 +15,18 @@ Scans your organized library and flags filenames that look messy — underscores
 ### [Library Dupes](library_dupes/)
 Finds songs that exist under more than one top-level artist folder in your organized library — for example, the same track in both an artist folder and a compilation folder. Includes a viewer for reviewing matches and a script for safely moving flagged copies to a holding folder.
 
+### [Sort Albums Into Artist Folders](sort_albums_to_artists/)
+Scans a flat folder of album subfolders, reads the Album Artist tag from the music files inside each one, and moves each album into a new or existing artist subfolder. Handles tag conflicts interactively.
+
+### [Sort CD Tracks](sort_cd_tracks/)
+Reads the disc number tag from music files and sorts them into CD1, CD2 etc. subfolders within each album folder. Useful for multi-disc albums where all tracks are in a single flat folder.
+
+### [Clean Album Folders](clean_album_folders/)
+Scans album folders and moves non-music files (cover art, NFOs, logs, playlists etc.) to a separate holding folder for review. Keeps CUE files in place.
+
+### [Anjuna MusicBrainz Lookup](anjuna_mb_lookup/)
+Batch-looks up Anjunabeats releases on MusicBrainz by extracting the catalogue number from folder names. Compares local file metadata against MB tracklists for confidence scoring. Includes an HTML viewer for reviewing and manually selecting matches.
+
 ### [Utilities](utilities/)
 Standalone rename scripts:
 - **rename_album_folders.py** — renames folders to match the album tag read from the music files inside
@@ -52,7 +64,7 @@ library_dupes/
   cp library_dupes_config.example.json library_dupes_config.json
 ```
 
-The filename scanner and utilities have their paths set directly at the top of each script.
+The filename scanner, utilities, and sorting scripts have their paths set directly at the top of each script or via a `--path` flag / folder picker dialog.
 
 ---
 

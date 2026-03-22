@@ -1,0 +1,20 @@
+# ── Dry run (default — safe, nothing is moved) ──
+python sort_albums_to_artists.py
+
+# ── Move for real ──
+python sort_albums_to_artists.py --apply
+
+# ── Pick folder with a dialog ──
+python sort_albums_to_artists.py --pick
+python sort_albums_to_artists.py --pick --apply
+
+# ── Override folder path ──
+python sort_albums_to_artists.py --path "C:\Music\Unsorted"
+python sort_albums_to_artists.py --path "C:\Music\Unsorted" --apply
+
+# ── Recommended workflow ──
+# Step 1 — dry run to see what would be moved and into which artist folders
+python sort_albums_to_artists.py --pick
+
+# Step 2 — move for real
+python sort_albums_to_artists.py --pick --apply
