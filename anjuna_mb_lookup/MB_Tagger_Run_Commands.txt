@@ -1,0 +1,87 @@
+# MusicBrainz Tagger Tools — Run Commands
+# =========================================
+# Scripts : anjuna_tagger.py  (Anjuna-specific, uses anjuna_lookup CSV)
+#           mb_lookup.py      (Generic lookup — any music collection)
+#           mb_tagger.py      (Generic tagger — works with any lookup CSV)
+# Viewer  : anjuna_lookup_viewer.html  (works for both Anjuna and generic lookups)
+# Reports : saved to <script folder>\reports\
+
+# ══════════════════════════════════════════════════════════════
+# ANJUNA WORKFLOW (Anjunabeats collection)
+# ══════════════════════════════════════════════════════════════
+
+# Step 1 — run the Anjuna-specific lookup (extracts ANJ* catno from folder names)
+python anjuna_mb_lookup.py
+
+# Step 2 — open the CSV in anjuna_lookup_viewer.html
+#           review any "Needs review" rows, click "Use this" to pick the right release
+#           click "Export CSV" to save with your selections
+
+# Step 3 — dry run the tagger (preview what will be tagged and renamed)
+python anjuna_tagger.py
+
+# Step 4 — tag for real
+python anjuna_tagger.py --apply
+
+# ══════════════════════════════════════════════════════════════
+# GENERIC WORKFLOW (any music collection e.g. Tiesto, etc.)
+# ══════════════════════════════════════════════════════════════
+
+# Step 1 — run the generic lookup
+python mb_lookup.py
+python mb_lookup.py "C:\path\to\folder"
+python mb_lookup.py "C:\path\to\folder" --auto
+python mb_lookup.py "C:\path\to\folder" --review
+
+# Step 2 — open the CSV in anjuna_lookup_viewer.html (same viewer works)
+#           review results, pick manually for any "Needs review" rows
+#           click "Export CSV"
+
+# Step 3 — dry run the generic tagger
+python mb_tagger.py
+
+# Step 4 — tag for real
+python mb_tagger.py --apply
+
+# ══════════════════════════════════════════════════════════════
+# FLAGS (apply to both anjuna_tagger.py and mb_tagger.py)
+# ══════════════════════════════════════════════════════════════
+# (no flags)    Dry run — preview only, nothing changes
+# --apply       Tag and rename for real
+# --skip-art    Skip cover art download (faster)
+
+# ══════════════════════════════════════════════════════════════
+# FLAGS (mb_lookup.py and anjuna_mb_lookup.py)
+# ══════════════════════════════════════════════════════════════
+# (no flags)    Opens folder picker, asks auto/review at runtime
+# --auto        Auto-pick best match when multiple results found
+# --review      Flag all multi-result cases for manual review
+
+# ══════════════════════════════════════════════════════════════
+# HOW mb_lookup.py FINDS RELEASES
+# ══════════════════════════════════════════════════════════════
+# It tries these search strategies in order for each folder:
+#
+# 1. Catalogue number — extracted from [brackets] in folder name
+#    e.g. [BH 118-5], [ANJ196D], [Magik Muzik 801-1]
+#
+# 2. Artist + Title — parsed from "Artist - Title" in folder name
+#
+# 3. Title only — in case artist name doesn't match MB exactly
+#
+# 4. Album tag from files — reads the album tag from the music files
+#    themselves as a last resort
+#
+# Folder name formats it understands:
+#   1999 - DJ Tiesto - Sparkles [BH 118-5] WEB
+#   Above & Beyond - Sun & Moon [ANJ196D] (2011)
+#   Artist - Album Title
+#   Artist - Album (Year)
+
+# ══════════════════════════════════════════════════════════════
+# AFTER TAGGING
+# ══════════════════════════════════════════════════════════════
+# Run folders through Picard afterwards to:
+#   - Confirm tags are correct
+#   - Fill in anything the script missed
+#   - MBIDs written into files mean Picard recognises them instantly

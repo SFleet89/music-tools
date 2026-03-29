@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clean Album Folders Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+  header { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 16px 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; font-weight: 600; color: #fff; }
+  header span { font-size: 13px; color: #64748b; }
+  .hbtn { background: none; border: 1px solid #2d3148; border-radius: 8px; color: #6366f1; cursor: pointer; font-size: 13px; padding: 6px 14px; margin-left: 4px; }
+  .hbtn:hover { background: #1a1d2e; }
+
+  #drop-zone { margin: 60px auto; max-width: 500px; border: 2px dashed #2d3148; border-radius: 12px; padding: 56px 32px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+  #drop-zone:hover, #drop-zone.drag-over { border-color: #6366f1; background: #1a1d2e; }
+  #drop-zone svg { margin-bottom: 16px; opacity: 0.4; }
+  #drop-zone p { color: #94a3b8; font-size: 14px; line-height: 1.7; }
+  #drop-zone strong { color: #e2e8f0; }
+  #file-input { display: none; }
+
+  #app { display: none; padding: 20px 24px; }
+
+  /* Summary cards */
+  .summary-cards { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .card { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 10px; padding: 12px 18px; min-width: 120px; }
+  .card .num { font-size: 24px; font-weight: 700; color: #fff; }
+  .card .lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .card.move .num { color: #fcd34d; }
+  .card.keep .num { color: #86efac; }
+  .card.error .num { color: #fca5a5; }
+
+  /* Extension pills */
+  .ext-section { margin-bottom: 14px; }
+  .ext-section-label { font-size: 11px; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .ext-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ext-pill { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 16px; padding: 4px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: border-color 0.15s; white-space: nowrap; }
+  .ext-pill:hover { border-color: #6366f1; }
+  .ext-pill.active { border-color: #6366f1; background: #1e2044; }
+  .ext-pill .ext-name { color: #e2e8f0; font-family: monospace; }
+  .ext-pill .ext-count { color: #fff; font-weight: 600; }
+  .ext-pill .ext-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Controls */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
+  input[type=text], select { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; color: #e2e8f0; padding: 8px 12px; font-size: 13px; outline: none; }
+  input[type=text] { width: 300px; }
+  input[type=text]:focus, select:focus { border-color: #6366f1; }
+  .btn { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; color: #94a3b8; padding: 8px 14px; font-size: 13px; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+  .btn:hover { color: #e2e8f0; border-color: #6366f1; }
+  .btn.active { color: #a5b4fc; border-color: #6366f1; background: #1e2044; }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid #2d3148; max-height: calc(100vh - 420px); overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: #1a1d2e; color: #94a3b8; font-weight: 500; padding: 10px 14px; text-align: left; white-space: nowrap; cursor: pointer; user-select: none; border-bottom: 1px solid #2d3148; position: sticky; top: 0; z-index: 1; }
+  thead th:hover { color: #e2e8f0; }
+  thead th.sorted { color: #a5b4fc; }
+  .sort-icon { margin-left: 4px; opacity: 0.35; font-size: 10px; }
+  thead th.sorted .sort-icon { opacity: 1; }
+  tbody tr { border-bottom: 1px solid #181c28; transition: background 0.1s; }
+  tbody tr:hover { background: #1a1d2e; }
+  tbody td { padding: 9px 14px; vertical-align: middle; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tbody td.path { font-family: "Consolas","Courier New",monospace; font-size: 11.5px; color: #94a3b8; }
+
+  /* Group by folder */
+  tr.group-header td { background: #13162a; color: #a5b4fc; font-size: 11.5px; font-weight: 600; padding: 6px 14px; border-bottom: 1px solid #2d3148; font-family: "Consolas","Courier New",monospace; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+  .badge-move  { background: #78350f; color: #fcd34d; }
+  .badge-keep  { background: #14532d; color: #86efac; }
+  .badge-moved { background: #1e3a5f; color: #93c5fd; }
+  .badge-error { background: #450a0a; color: #fca5a5; }
+  .badge-ext   { background: #1f2937; color: #94a3b8; font-family: monospace; font-size: 11px; }
+
+  .no-results { text-align: center; padding: 56px; color: #4b5563; font-size: 14px; }
+  .footer { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #4b5563; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#6366f1" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+  </svg>
+  <h1>Clean Album Folders Viewer</h1>
+  <span id="header-file"></span>
+  <button id="load-new" class="hbtn" style="display:none" onclick="resetViewer()">⟳ Load new report</button>
+  <button id="export-btn" class="hbtn" style="display:none" onclick="exportCSV()">⬇ Export CSV</button>
+</header>
+
+<div id="drop-zone" onclick="document.getElementById('file-input').click()">
+  <svg width="44" height="44" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586 a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+  </svg>
+  <p><strong>Drop a clean_album_folders CSV here</strong><br>or click to browse<br><br>
+  Works with <code>clean_album_folders_dry_*.csv</code> and <code>clean_album_folders_applied_*.csv</code></p>
+  <input type="file" id="file-input" accept=".csv">
+</div>
+
+<div id="app">
+  <!-- Summary cards -->
+  <div class="summary-cards" id="summary-cards"></div>
+
+  <!-- Extension pills -->
+  <div class="ext-section">
+    <div class="ext-section-label">Filter by file type</div>
+    <div class="ext-pills" id="ext-pills"></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search filename or folder path…">
+    <select id="filter-action">
+      <option value="">All actions</option>
+      <option value="move to holding">Move to holding</option>
+      <option value="keep">Keep</option>
+    </select>
+    <button class="btn" id="group-btn" onclick="toggleGroup()">Group by folder</button>
+    <button class="btn" onclick="clearFilters()">Clear filters</button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table>
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <span id="row-count"></span>
+  </div>
+</div>
+
+<script>
+let allRows = [], sortCol = 'Action', sortAsc = true;
+let activeExt = '', groupByFolder = false;
+let csvFilename = '', csvHeaders = [];
+
+const COLS = [
+  { key: 'File',      label: 'File' },
+  { key: 'Extension', label: 'Ext' },
+  { key: 'Action',    label: 'Action' },
+  { key: 'Reason',    label: 'Reason' },
+  { key: 'Status',    label: 'Status' },
+];
+
+// Extension colour map — common file types get distinct colours
+const EXT_COLORS = {
+  '.jpg':  '#f59e0b', '.jpeg': '#f59e0b', '.png':  '#f59e0b', '.gif': '#f59e0b',
+  '.webp': '#f59e0b', '.bmp':  '#f59e0b', '.tiff': '#f59e0b',
+  '.nfo':  '#818cf8', '.txt':  '#818cf8', '.log':  '#818cf8', '.md':  '#818cf8',
+  '.cue':  '#34d399', '.m3u':  '#34d399', '.m3u8': '#34d399', '.pls': '#34d399',
+  '.pdf':  '#f87171', '.doc':  '#f87171', '.docx': '#f87171',
+  '.zip':  '#a78bfa', '.rar':  '#a78bfa', '.7z':   '#a78bfa',
+  '.exe':  '#fb923c', '.bat':  '#fb923c',
+  '.db':   '#64748b', '.ini':  '#64748b', '.url':  '#64748b',
+};
+
+function extColor(ext) {
+  return EXT_COLORS[ext.toLowerCase()] || '#64748b';
+}
+
+// ── CSV parser ─────────────────────────────────────────────────────────────────
+function parseCSV(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const lines   = text.split(/\r?\n/);
+  const headers = splitLine(lines[0]).map(h => h.trim());
+  const rows    = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = splitLine(lines[i]);
+    const row  = {};
+    headers.forEach((h, j) => { row[h] = (vals[j] || '').trim(); });
+    rows.push(row);
+  }
+  return { headers, rows };
+}
+
+function splitLine(line) {
+  const out = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
+    else if (c === ',' && !inQ) { out.push(cur); cur=''; }
+    else cur += c;
+  }
+  out.push(cur); return out;
+}
+
+// ── Summary cards ──────────────────────────────────────────────────────────────
+function buildSummaryCards() {
+  const toMove  = allRows.filter(r => r['Action'] === 'move to holding').length;
+  const toKeep  = allRows.filter(r => r['Action'] === 'keep').length;
+  const moved   = allRows.filter(r => r['Status'] === 'moved').length;
+  const errors  = allRows.filter(r => (r['Status'] || '').startsWith('error')).length;
+  const isDry   = allRows.some(r => r['Status'] === 'would move');
+
+  const cards = [
+    { num: allRows.length, lbl: 'Total files', cls: '' },
+    { num: toMove,  lbl: isDry ? 'Would move' : 'To move', cls: 'move' },
+    { num: toKeep,  lbl: 'Kept', cls: 'keep' },
+  ];
+  if (!isDry && moved)  cards.push({ num: moved,  lbl: 'Moved',  cls: 'keep' });
+  if (errors)           cards.push({ num: errors, lbl: 'Errors', cls: 'error' });
+
+  document.getElementById('summary-cards').innerHTML = cards.map(c =>
+    `<div class="card ${c.cls}"><div class="num">${c.num.toLocaleString()}</div><div class="lbl">${c.lbl}</div></div>`
+  ).join('');
+}
+
+// ── Extension pills ────────────────────────────────────────────────────────────
+function buildExtPills() {
+  // Only count files being moved
+  const moveRows = allRows.filter(r => r['Action'] === 'move to holding');
+  const counts   = {};
+  moveRows.forEach(r => {
+    const ext = r['Extension'] || '(none)';
+    counts[ext] = (counts[ext] || 0) + 1;
+  });
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const container = document.getElementById('ext-pills');
+
+  // All pill
+  const allPill = document.createElement('div');
+  allPill.className = 'ext-pill' + (activeExt === '' ? ' active' : '');
+  allPill.innerHTML = `<span class="ext-name">ALL</span><span class="ext-count">${moveRows.length}</span>`;
+  allPill.onclick = () => { activeExt = ''; buildExtPills(); render(); };
+  container.innerHTML = '';
+  container.appendChild(allPill);
+
+  sorted.forEach(([ext, count]) => {
+    const pill = document.createElement('div');
+    pill.className = 'ext-pill' + (activeExt === ext ? ' active' : '');
+    const color = extColor(ext);
+    pill.innerHTML = `<span class="ext-dot" style="background:${color}"></span><span class="ext-name">${ext}</span><span class="ext-count">${count}</span>`;
+    pill.onclick = () => { activeExt = ext; buildExtPills(); render(); };
+    container.appendChild(pill);
+  });
+}
+
+// ── Filtering ──────────────────────────────────────────────────────────────────
+function getFiltered() {
+  const search  = document.getElementById('search').value.toLowerCase();
+  const actionF = document.getElementById('filter-action').value;
+
+  return allRows.filter(r => {
+    if (actionF && r['Action'] !== actionF) return false;
+    if (activeExt && r['Extension'] !== activeExt) return false;
+    if (search) {
+      const hay = (r['File'] + ' ' + r['Reason'] + ' ' + r['Status']).toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+// ── Folder extraction ──────────────────────────────────────────────────────────
+function getFolder(filePath) {
+  const parts = filePath.replace(/\\/g, '/').split('/');
+  return parts.length > 1 ? parts.slice(0, -1).join('/') : '(root)';
+}
+
+function getFilename(filePath) {
+  const parts = filePath.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1];
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────────
+function buildHeader() {
+  const tr = document.createElement('tr');
+  COLS.forEach(col => {
+    const th = document.createElement('th');
+    const sorted = sortCol === col.key;
+    if (sorted) th.classList.add('sorted');
+    th.innerHTML = col.label + '<span class="sort-icon">' + (sorted ? (sortAsc?'▲':'▼') : '⇅') + '</span>';
+    th.onclick = () => {
+      if (sortCol === col.key) sortAsc = !sortAsc;
+      else { sortCol = col.key; sortAsc = true; }
+      render();
+    };
+    tr.appendChild(th);
+  });
+  document.getElementById('thead').innerHTML = '';
+  document.getElementById('thead').appendChild(tr);
+}
+
+function actionBadge(action) {
+  if (action === 'move to holding') return '<span class="badge badge-move">move</span>';
+  if (action === 'keep')            return '<span class="badge badge-keep">keep</span>';
+  return '<span class="badge badge-ext">' + esc(action) + '</span>';
+}
+
+function statusBadge(status) {
+  if (!status) return '';
+  if (status === 'moved')       return '<span class="badge badge-moved">moved</span>';
+  if (status === 'kept')        return '<span class="badge badge-keep">kept</span>';
+  if (status === 'would move')  return '<span class="badge badge-move">would move</span>';
+  if (status.startsWith('error')) return '<span class="badge badge-error">error</span>';
+  return '<span class="badge badge-ext">' + esc(status) + '</span>';
+}
+
+function render() {
+  buildHeader();
+  let rows = getFiltered();
+
+  if (sortCol) {
+    rows = [...rows].sort((a, b) => {
+      let av = a[sortCol] || '', bv = b[sortCol] || '';
+      return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+  }
+
+  const tbody = document.getElementById('tbody');
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="' + COLS.length + '" class="no-results">No rows match your filters</td></tr>';
+    document.getElementById('row-count').textContent = 'No results';
+    return;
+  }
+
+  let html = '';
+
+  if (groupByFolder) {
+    // Group rows by folder
+    const groups = {};
+    rows.forEach(r => {
+      const folder = getFolder(r['File']);
+      if (!groups[folder]) groups[folder] = [];
+      groups[folder].push(r);
+    });
+
+    Object.entries(groups).sort(([a],[b]) => a.localeCompare(b)).forEach(([folder, frows]) => {
+      html += `<tr class="group-header"><td colspan="${COLS.length}">📁 ${esc(folder)}  <span style="color:#4b5563;font-weight:400">(${frows.length} file${frows.length!==1?'s':''})</span></td></tr>`;
+      frows.forEach(r => { html += buildRow(r, true); });
+    });
+  } else {
+    rows.forEach(r => { html += buildRow(r, false); });
+  }
+
+  tbody.innerHTML = html;
+  document.getElementById('row-count').textContent =
+    'Showing ' + rows.length.toLocaleString() + ' of ' + allRows.length.toLocaleString() + ' rows';
+}
+
+function buildRow(r, inGroup) {
+  const filePath = r['File'] || '';
+  const filename = inGroup ? getFilename(filePath) : filePath;
+  const color    = extColor(r['Extension'] || '');
+
+  return '<tr>' +
+    '<td class="path" title="' + esc(filePath) + '">' + esc(filename) + '</td>' +
+    '<td><span class="badge badge-ext" style="color:' + color + ';border-color:' + color + '40">' + esc(r['Extension'] || '—') + '</span></td>' +
+    '<td>' + actionBadge(r['Action'] || '') + '</td>' +
+    '<td style="color:#94a3b8;font-size:11.5px">' + esc(r['Reason'] || '') + '</td>' +
+    '<td>' + statusBadge(r['Status'] || '') + '</td>' +
+    '</tr>';
+}
+
+// ── Toggle group ───────────────────────────────────────────────────────────────
+function toggleGroup() {
+  groupByFolder = !groupByFolder;
+  document.getElementById('group-btn').classList.toggle('active', groupByFolder);
+  render();
+}
+
+// ── Export CSV ─────────────────────────────────────────────────────────────────
+function exportCSV() {
+  if (!allRows.length) return;
+  const headers = csvHeaders.length ? csvHeaders : Object.keys(allRows[0]);
+  const escCell = v => {
+    v = String(v ?? '');
+    if (v.includes(',') || v.includes('"') || v.includes('\n')) return '"' + v.replace(/"/g,'""') + '"';
+    return v;
+  };
+  const lines = [
+    headers.map(escCell).join(','),
+    ...allRows.map(r => headers.map(h => escCell(r[h] ?? '')).join(','))
+  ];
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  const ts = new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
+  a.download = 'exported_' + (csvFilename.replace('.csv','') || 'clean_album_folders') + '_' + ts + '.csv';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Filters ────────────────────────────────────────────────────────────────────
+function clearFilters() {
+  document.getElementById('search').value = '';
+  document.getElementById('filter-action').value = '';
+  activeExt = '';
+  buildExtPills();
+  render();
+}
+
+function esc(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── File loading ───────────────────────────────────────────────────────────────
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const parsed  = parseCSV(e.target.result);
+    allRows       = parsed.rows;
+    csvHeaders    = parsed.headers;
+    csvFilename   = file.name;
+
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('app').style.display       = 'block';
+    document.getElementById('load-new').style.display  = 'inline';
+    document.getElementById('export-btn').style.display = 'inline';
+    document.getElementById('header-file').textContent = file.name;
+
+    buildSummaryCards();
+    buildExtPills();
+    render();
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+function resetViewer() {
+  allRows=[]; csvFilename=''; csvHeaders=[]; activeExt=''; groupByFolder=false;
+  sortCol='Action'; sortAsc=true;
+  document.getElementById('drop-zone').style.display  = 'block';
+  document.getElementById('app').style.display        = 'none';
+  document.getElementById('load-new').style.display   = 'none';
+  document.getElementById('export-btn').style.display = 'none';
+  document.getElementById('header-file').textContent  = '';
+  document.getElementById('file-input').value         = '';
+  document.getElementById('group-btn').classList.remove('active');
+  document.getElementById('search').value = '';
+  document.getElementById('filter-action').value = '';
+}
+
+// ── Events ─────────────────────────────────────────────────────────────────────
+document.getElementById('file-input').onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); };
+document.getElementById('search').oninput = render;
+document.getElementById('filter-action').onchange = render;
+
+const dz = document.getElementById('drop-zone');
+dz.ondragover  = e => { e.preventDefault(); dz.classList.add('drag-over'); };
+dz.ondragleave = () => dz.classList.remove('drag-over');
+dz.ondrop = e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+};
+</script>
+</body>
+</html>

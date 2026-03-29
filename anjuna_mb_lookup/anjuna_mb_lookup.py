@@ -1,5 +1,5 @@
 """
-Anjunabeats MusicBrainz Batch Lookup  v1.2
+Anjunabeats MusicBrainz Batch Lookup  v1.3
 ===========================================
 Scans a batch folder of Anjunabeats releases, extracts the catalogue
 number from each subfolder name, and looks it up on MusicBrainz.
@@ -19,7 +19,7 @@ Output:
     Reports are saved next to the script in:
     <script folder>\\reports\\anjuna_lookup_YYYYMMDD_HHMMSS.csv
 
-Changes in v1.2:
+Changes in v1.3:
     - Reports now save next to the script, not inside the batch folder
     - Fixed catno scoring to normalise hyphens (ANJ101 == ANJ-101)
     - Improved variant handling for R/R2 remix releases
@@ -548,38 +548,57 @@ def print_summary(rows, auto_mode, output_path):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def pick_multiple_folders():
+    """
+    Open repeated folder picker dialogs, collecting folders until the user
+    cancels or clicks Cancel. Returns a list of Path objects.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox
+    except ImportError:
+        return None
+
+    folders  = []
+    initial  = r"C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC"
+
+    root_tk = tk.Tk()
+    root_tk.withdraw()
+    root_tk.attributes("-topmost", True)
+
+    while True:
+        chosen = filedialog.askdirectory(
+            title="Select Anjuna batch folder %d (Cancel when done)" % (len(folders) + 1),
+            initialdir=initial,
+            parent=root_tk,
+        )
+        if not chosen:
+            break
+        p = Path(chosen)
+        if p not in folders:
+            folders.append(p)
+            initial = str(p.parent)   # start next picker in same parent
+
+        # Ask whether to add another
+        add_more = messagebox.askyesno(
+            "Add another folder?",
+            "Added:\n%s\n\n%d folder(s) selected so far.\n\nAdd another folder?" % (
+                p.name, len(folders)
+            ),
+            parent=root_tk,
+        )
+        if not add_more:
+            break
+
+    root_tk.destroy()
+    return folders if folders else None
+
+
 def main():
     args  = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags = [a for a in sys.argv[1:] if a.startswith("--")]
 
-    if not args:
-        # No path given — open a folder picker dialog
-        try:
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            chosen = filedialog.askdirectory(
-                title="Select Anjuna batch folder to process",
-                initialdir=r"C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC",
-            )
-            root.destroy()
-            if not chosen:
-                print("No folder selected. Exiting.")
-                sys.exit(0)
-            batch_path = Path(chosen)
-        except Exception as e:
-            print("ERROR: Could not open folder picker: %s" % e)
-            print()
-            print("Usage: python anjuna_mb_lookup.py <batch_folder_path> [--auto | --review]")
-            sys.exit(1)
-    else:
-        batch_path = Path(args[0].strip('"'))
-    if not batch_path.exists() or not batch_path.is_dir():
-        print("ERROR: Folder not found: %s" % batch_path)
-        sys.exit(1)
-
+    # ── Determine mode first ──
     if "--auto" in flags:
         auto_mode = True
     elif "--review" in flags:
@@ -604,6 +623,23 @@ def main():
 
     mode_label = "auto-pick" if auto_mode else "manual review"
 
+    # ── Determine folders to process ──
+    if args:
+        # Paths passed on command line
+        batch_folders = []
+        for a in args:
+            p = Path(a.strip('"'))
+            if not p.exists() or not p.is_dir():
+                print("ERROR: Folder not found: %s" % p)
+                sys.exit(1)
+            batch_folders.append(p)
+    else:
+        # Multi-folder picker
+        batch_folders = pick_multiple_folders()
+        if not batch_folders:
+            print("No folders selected. Exiting.")
+            sys.exit(0)
+
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     reports_dir = SCRIPT_DIR / "reports"
     reports_dir.mkdir(exist_ok=True)
@@ -611,19 +647,28 @@ def main():
 
     print()
     print("=" * 60)
-    print("  Anjunabeats MusicBrainz Batch Lookup  v1.2")
+    print("  Anjunabeats MusicBrainz Batch Lookup  v1.3")
     print("=" * 60)
-    print("  Folder    : %s" % batch_path)
+    print("  Folders   : %d selected" % len(batch_folders))
+    for f in batch_folders:
+        print("              %s" % f.name)
     print("  Mode      : %s" % mode_label)
     print("  Metadata  : %s" % ("enabled" if MUTAGEN_AVAILABLE else "disabled (install mutagen)"))
     print("  Output    : %s" % output_path)
     print("=" * 60)
 
-    rows = run_lookup(str(batch_path), auto_mode)
+    # Process all folders, accumulating rows into one combined report
+    all_rows = []
+    for idx, batch_path in enumerate(batch_folders, 1):
+        if len(batch_folders) > 1:
+            print()
+            print("── Batch %d/%d: %s ──" % (idx, len(batch_folders), batch_path.name))
+        rows = run_lookup(str(batch_path), auto_mode)
+        all_rows.extend(rows)
 
-    if rows:
-        write_csv(rows, str(output_path))
-        print_summary(rows, auto_mode, str(output_path))
+    if all_rows:
+        write_csv(all_rows, str(output_path))
+        print_summary(all_rows, auto_mode, str(output_path))
     else:
         print("  No results to save.")
 

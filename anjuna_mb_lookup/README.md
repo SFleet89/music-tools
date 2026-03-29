@@ -1,22 +1,20 @@
-# Anjuna MusicBrainz Batch Lookup
+# MusicBrainz Tagger Tools
 
-A Python script that scans a folder of Anjunabeats releases, extracts the catalogue number from each subfolder name, and automatically looks it up on MusicBrainz. Includes metadata comparison using your existing file tags to improve match confidence.
+A set of scripts for batch-tagging music folders using MusicBrainz data. Looks up releases by catalogue number, artist, or title, scores candidates using file metadata for confidence, then writes full tags and embeds cover art.
+
+Nothing is changed until you run with `--apply`. Dry run by default.
 
 ---
 
-## How it works
+## Scripts
 
-Each subfolder in the batch folder is treated as one release. The script:
-
-1. Extracts the ANJ*/ANJCD*/ANJDJ* catalogue number from the folder name
-2. Searches MusicBrainz by catalogue number
-3. If no result, tries common suffix variants (D, R, EP, CD, DJ etc.)
-4. Reads existing file tags (title, artist, track count) using mutagen
-5. Fetches the full tracklist from MusicBrainz for each candidate
-6. Scores each candidate using catalogue number match (60%) and metadata match (40%)
-7. Either auto-picks the best match or flags it for manual review in the viewer
-
-Results are saved to a timestamped CSV in the `reports\` folder next to the script.
+| Script | Purpose |
+|---|---|
+| `anjuna_mb_lookup.py` | Anjuna-specific lookup — extracts ANJ*/ANJCD* catalogue numbers from folder names |
+| `mb_lookup.py` | Generic lookup — works with any music collection |
+| `anjuna_tagger.py` | Tags files using output from `anjuna_mb_lookup.py` |
+| `mb_tagger.py` | Tags files using output from `mb_lookup.py` or any lookup CSV |
+| `anjuna_lookup_viewer.html` | Interactive viewer for all lookup CSVs — review and select correct releases |
 
 ---
 
@@ -26,94 +24,129 @@ Results are saved to a timestamped CSV in the `reports\` folder next to the scri
 pip install mutagen
 ```
 
-`mutagen` is required for reading file metadata. Without it the script will still run but metadata comparison will be disabled and all matches will rely on catalogue number alone.
-
 ---
 
-## Setup
+## Workflow
 
-1. Place `anjuna_mb_lookup.py` and `anjuna_lookup_viewer.html` in the same folder
-2. Install mutagen: `pip install mutagen`
-3. Run the script
-
----
-
-## Usage
+### Anjunabeats collection
 
 ```
-python anjuna_mb_lookup.py                              # opens folder picker
-python anjuna_mb_lookup.py "C:\path\to\batch folder"   # use path directly
-python anjuna_mb_lookup.py "C:\path\to\batch folder" --auto    # auto-pick mode
-python anjuna_mb_lookup.py "C:\path\to\batch folder" --review  # review mode
+# 1. Look up releases by ANJ catalogue number
+python anjuna_mb_lookup.py
+
+# 2. Open CSV in anjuna_lookup_viewer.html, review, export with selections
+
+# 3. Dry run — preview tags and new folder names
+python anjuna_tagger.py
+
+# 4. Tag for real
+python anjuna_tagger.py --apply
 ```
 
-Run one batch folder at a time. Reports are saved to `reports\` next to the script regardless of which batch folder you process.
+### Any other collection
+
+```
+# 1. Look up releases by catno / artist / title
+python mb_lookup.py
+
+# 2. Open CSV in anjuna_lookup_viewer.html, review, export with selections
+
+# 3. Dry run
+python mb_tagger.py
+
+# 4. Tag for real
+python mb_tagger.py --apply
+```
 
 ---
 
-## Modes
+## How mb_lookup.py finds releases
 
-When multiple MusicBrainz releases are found for the same catalogue number, you can choose how to handle them:
+For each subfolder it tries these strategies in order, stopping as soon as results are found:
 
-| Mode | How it works |
-|---|---|
-| **Auto-pick** | Automatically selects the highest-scoring candidate using catno + metadata scoring. Best for large batches where speed matters. |
-| **Review** | Flags all multi-result cases in the report with no MBID assigned. Open the viewer to compare candidates and select the right one manually. |
+1. **Catalogue number** — extracted from `[brackets]` in the folder name (e.g. `[BH 118-5]`, `[Magik Muzik 801-1]`)
+2. **Artist + Title** — parsed from `Artist - Title` structure in folder name
+3. **Title only** — in case artist name doesn't match MB exactly
+4. **Album tag from files** — reads the album tag from the music files themselves as a last resort
 
-If neither `--auto` nor `--review` is passed on the command line, the script asks at runtime.
+### Folder name formats supported
 
----
-
-## Catalogue number variants
-
-If the exact catalogue number from the folder name returns no results, the script automatically tries common Anjunabeats suffix variants. The variants tried depend on the type of release:
-
-- **Standard releases** (no suffix): tries D, EP, E, X, then R/R2, then CD/DJ/DEEP
-- **Remix releases** (R/R2 suffix): tries bare base and other R variants only — does not cross into D variants
-- **Digital releases** (D suffix): tries bare base and other digital variants only
-
-This prevents remix releases from being incorrectly matched to the digital version of a different release.
+```
+1999 - DJ Tiesto - Sparkles [BH 118-5] WEB
+2001 - DJ Tiesto - Flight 643 [Magik Muzik 801-1] CD
+Above & Beyond - Sun & Moon [ANJ196D] (2011)
+Artist - Album Title (Year)
+Artist - Album Title
+```
 
 ---
 
 ## Scoring
 
-Each candidate release gets three scores:
+Each candidate release is scored against your folder to rank results:
 
 | Column | What it measures |
 |---|---|
-| `catno_score` | How well the MusicBrainz catalogue number matches your folder catno (hyphens ignored, so ANJ101 == ANJ-101) |
-| `meta_score` | How well the MusicBrainz tracklist matches your local file tags (title, track count) |
-| `combined_score` | Weighted average: catno 60% + metadata 40% |
-| `track_match_pct` | Percentage of local track titles fuzzy-matched against the MB tracklist |
+| `search_score` | How well the MB catalogue number / title matches your folder name |
+| `meta_score` | How well the MB tracklist matches your local file tags |
+| `combined_score` | Weighted average: search 60% + metadata 40% |
+| `track_match_pct` | % of local track titles fuzzy-matched against MB tracklist |
 | `count_match` | Whether local file count matches MB track count |
 
-**Note:** If your files have no title tags yet (i.e. before Picard tagging), `meta_score` will show 50 and `track_match_pct` will show 0. This is expected and does not mean the match is wrong — check `catno_score` and `count_match` instead.
+---
+
+## Tags written
+
+For every file in the folder:
+
+- Title, Artist, Album Artist
+- Track number (with total e.g. 3/12)
+- Disc number (with total e.g. 1/2)
+- Year / Date
+- Label
+- Catalogue number
+- Cover art (from Cover Art Archive)
 
 ---
 
-## Status codes
+## Folder renaming
 
-| Status | Meaning |
-|---|---|
-| `matched` | Single MusicBrainz result found |
-| `auto_matched` | Multiple results found, best candidate auto-selected |
-| `review` | Multiple results found, flagged for manual selection in viewer |
-| `not_found` | No results found after trying all catalogue number variants |
-| `no_catno` | Folder name does not contain a recognisable ANJ* catalogue number |
-| `error` | Network error during lookup — safe to re-run |
+After tagging, each folder is renamed to:
+```
+Artist - Title (Year)
+```
+
+For example:
+```
+ANJ111 Signalrunners & Julie Thompson - These Shoulders
+→ Signalrunners & Julie Thompson - These Shoulders (2008)
+
+1999 - DJ Tiesto - Sparkles [BH 118-5] WEB
+→ DJ Tiesto - Sparkles (1999)
+```
 
 ---
 
-## Viewer
+## Flags
 
-Open `anjuna_lookup_viewer.html` in any browser and drag-drop your CSV report onto it.
+| Flag | Both taggers | Lookup scripts |
+|---|---|---|
+| `--apply` | Tag for real | — |
+| `--skip-art` | Skip cover art | — |
+| `--auto` | — | Auto-pick best match |
+| `--review` | — | Flag all multi-results |
 
-- Filter by status using the coloured pills at the top
-- Search by folder name, catalogue number, title, or artist
-- Sort by any column
-- For **Needs review** rows, click **Show X** to expand all candidates
-- Click **Use this** on the correct candidate to assign its MBID and mark the row as matched
+---
+
+## After tagging
+
+Run the tagged folders through Picard afterwards to confirm. Since the MBIDs are written into the file tags, Picard will recognise each release instantly rather than needing to search.
+
+---
+
+## Supported formats
+
+MP3, FLAC, AAC, M4A
 
 ---
 
@@ -121,16 +154,11 @@ Open `anjuna_lookup_viewer.html` in any browser and drag-drop your CSV report on
 
 | File | Description |
 |---|---|
-| `anjuna_mb_lookup.py` | Main lookup script |
-| `anjuna_lookup_viewer.html` | Interactive report viewer |
-| `Anjuna_Lookup_Run_Commands.txt` | Quick reference for all run commands |
+| `anjuna_mb_lookup.py` | Anjuna-specific lookup |
+| `anjuna_tagger.py` | Anjuna tagger |
+| `mb_lookup.py` | Generic lookup |
+| `mb_tagger.py` | Generic tagger |
+| `anjuna_lookup_viewer.html` | Lookup viewer (works for all lookup CSVs) |
+| `MB_Tagger_Run_Commands.txt` | Quick reference |
 | `CHANGELOG.md` | Version history |
-| `reports\` | Auto-created folder where CSV reports are saved |
-
----
-
-## Notes
-
-- MusicBrainz enforces a rate limit of 1 request per second. The script respects this with a 1.1 second delay between requests. On a 100-release batch expect 6–8 minutes.
-- The script fetches full release details (tracklist) for every candidate, which means 2–3 API calls per folder. This is what enables the metadata comparison but does add to the runtime.
-- Network errors mid-run are safe — just re-run the script on the same folder. Already-processed folders will be re-checked but results are identical for matched releases.
+| `reports\` | Per-run CSV reports |
