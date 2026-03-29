@@ -1,6 +1,6 @@
 # MusicBrainz Tagger Tools
 
-A set of scripts for batch-tagging music folders using MusicBrainz data. Looks up releases by catalogue number, artist, or title, scores candidates using file metadata for confidence, then writes full tags and embeds cover art.
+A set of scripts for batch-tagging music folders using MusicBrainz data. Looks up releases by audio fingerprint, catalogue number, artist, or title — scores candidates using file metadata for confidence — then writes full tags and embeds cover art.
 
 Nothing is changed until you run with `--apply`. Dry run by default.
 
@@ -11,7 +11,8 @@ Nothing is changed until you run with `--apply`. Dry run by default.
 | Script | Purpose |
 |---|---|
 | `anjuna_mb_lookup.py` | Anjuna-specific lookup — extracts ANJ*/ANJCD* catalogue numbers from folder names |
-| `mb_lookup.py` | Generic lookup — works with any music collection |
+| `mb_lookup.py` | General-purpose lookup — works with any collection, any folder naming convention |
+| `tiesto_lookup.py` | Tiesto collection lookup — same as mb_lookup v1.0, tuned for `Year - Artist - Title [CatNo]` format |
 | `anjuna_tagger.py` | Tags files using output from `anjuna_mb_lookup.py` |
 | `mb_tagger.py` | Tags files using output from `mb_lookup.py` or any lookup CSV |
 | `anjuna_lookup_viewer.html` | Interactive viewer for all lookup CSVs — review and select correct releases |
@@ -23,6 +24,12 @@ Nothing is changed until you run with `--apply`. Dry run by default.
 ```
 pip install mutagen
 ```
+
+**For fingerprinting** — place `fpcalc.exe` (Chromaprint) in the shared tools folder:
+```
+C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\fpcalc.exe
+```
+Or pass a custom path with `--fpcalc`. If fpcalc is not found, the script continues without fingerprinting.
 
 ---
 
@@ -46,7 +53,7 @@ python anjuna_tagger.py --apply
 ### Any other collection
 
 ```
-# 1. Look up releases by catno / artist / title
+# 1. Look up releases (fingerprint + catno + metadata fallbacks)
 python mb_lookup.py
 
 # 2. Open CSV in anjuna_lookup_viewer.html, review, export with selections
@@ -64,10 +71,13 @@ python mb_tagger.py --apply
 
 For each subfolder it tries these strategies in order, stopping as soon as results are found:
 
-1. **Catalogue number** — extracted from `[brackets]` in the folder name (e.g. `[BH 118-5]`, `[Magik Muzik 801-1]`)
-2. **Artist + Title** — parsed from `Artist - Title` structure in folder name
-3. **Title only** — in case artist name doesn't match MB exactly
-4. **Album tag from files** — reads the album tag from the music files themselves as a last resort
+| Priority | Method | Notes |
+|---|---|---|
+| 0 | **AcoustID fingerprint** | Samples up to 3 files, queries AcoustID, ranks MB release IDs by consensus |
+| 1 | **Catalogue number** | Extracted from `[brackets]` in folder name |
+| 2 | **Artist + Title** | Parsed from `Artist - Title` structure in folder name |
+| 3 | **Title only** | In case artist name doesn't match MB exactly |
+| 4 | **Album tag from files** | Reads album tag from embedded file metadata as last resort |
 
 ### Folder name formats supported
 
@@ -75,8 +85,10 @@ For each subfolder it tries these strategies in order, stopping as soon as resul
 1999 - DJ Tiesto - Sparkles [BH 118-5] WEB
 2001 - DJ Tiesto - Flight 643 [Magik Muzik 801-1] CD
 Above & Beyond - Sun & Moon [ANJ196D] (2011)
+Kesha - Animal + Cannibal (15th Anniversary)
 Artist - Album Title (Year)
 Artist - Album Title
+jeremy-soule-the-elder-scrolls-v-skyrim   ← falls back to file tags
 ```
 
 ---
@@ -92,6 +104,9 @@ Each candidate release is scored against your folder to rank results:
 | `combined_score` | Weighted average: search 60% + metadata 40% |
 | `track_match_pct` | % of local track titles fuzzy-matched against MB tracklist |
 | `count_match` | Whether local file count matches MB track count |
+| `acoustid_mbids` | MB release IDs returned by AcoustID (up to 5, pipe-separated) |
+
+Single-result matches with a combined score below 35 are flagged as `review` rather than `matched` to avoid false positives.
 
 ---
 
@@ -123,24 +138,29 @@ ANJ111 Signalrunners & Julie Thompson - These Shoulders
 
 1999 - DJ Tiesto - Sparkles [BH 118-5] WEB
 → DJ Tiesto - Sparkles (1999)
+
+jeremy-soule-the-elder-scrolls-v-skyrim
+→ Jeremy Soule - The Elder Scrolls V: Skyrim (2011)
 ```
 
 ---
 
 ## Flags
 
-| Flag | Both taggers | Lookup scripts |
+| Flag | Scripts | Effect |
 |---|---|---|
-| `--apply` | Tag for real | — |
-| `--skip-art` | Skip cover art | — |
-| `--auto` | — | Auto-pick best match |
-| `--review` | — | Flag all multi-results |
+| `--apply` | taggers | Tag for real (default is dry run) |
+| `--skip-art` | taggers | Skip cover art download |
+| `--auto` | lookup | Auto-pick best match when multiple results found |
+| `--review` | lookup | Flag all multi-result folders for manual review |
+| `--no-fingerprint` | mb_lookup | Skip AcoustID fingerprinting |
+| `--fpcalc PATH` | mb_lookup | Path to fpcalc.exe if not in default tools folder |
 
 ---
 
 ## After tagging
 
-Run the tagged folders through Picard afterwards to confirm. Since the MBIDs are written into the file tags, Picard will recognise each release instantly rather than needing to search.
+Run the tagged folders through Picard afterwards to confirm. Since MBIDs are written into the file tags, Picard will recognise each release instantly rather than needing to search.
 
 ---
 
@@ -156,9 +176,9 @@ MP3, FLAC, AAC, M4A
 |---|---|
 | `anjuna_mb_lookup.py` | Anjuna-specific lookup |
 | `anjuna_tagger.py` | Anjuna tagger |
-| `mb_lookup.py` | Generic lookup |
+| `mb_lookup.py` | General-purpose lookup |
+| `tiesto_lookup.py` | Tiesto collection lookup (mb_lookup v1.0) |
 | `mb_tagger.py` | Generic tagger |
 | `anjuna_lookup_viewer.html` | Lookup viewer (works for all lookup CSVs) |
-| `MB_Tagger_Run_Commands.txt` | Quick reference |
 | `CHANGELOG.md` | Version history |
 | `reports\` | Per-run CSV reports |

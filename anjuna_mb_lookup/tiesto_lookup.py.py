@@ -1,14 +1,12 @@
 """
-MusicBrainz Batch Lookup  v2.0
+MusicBrainz Batch Lookup  v1.0
 ================================
-Generic music collection lookup — works with any folder of album subfolders.
+Generic version of anjuna_mb_lookup — works with any music collection.
 
-Matching strategy (in priority order):
-  0. AcoustID audio fingerprint  (requires fpcalc.exe)
-  1. Catalogue number            (from folder name)
-  2. Artist + Title              (from folder name)
-  3. Title only                  (from folder name)
-  4. Album tag from files        (from embedded metadata)
+Scans a folder of album subfolders, extracts search terms from each folder
+name (catalogue number, artist, title, year), and looks them up on
+MusicBrainz. Compares local file metadata against MB tracklists for
+confidence scoring.
 
 Folder name patterns supported:
   Year - Artist - Title [CatNo] Format
@@ -20,25 +18,15 @@ Folder name patterns supported:
 
 Requirements:
     pip install mutagen
-    fpcalc.exe  (Chromaprint — place in tools folder or pass --fpcalc PATH)
 
 Usage:
-    python mb_lookup.py                          # opens folder picker
+    python mb_lookup.py                    # opens folder picker
     python mb_lookup.py "C:\\path\\to\\folder"
     python mb_lookup.py "C:\\path\\to\\folder" --auto
     python mb_lookup.py "C:\\path\\to\\folder" --review
-    python mb_lookup.py "C:\\path\\to\\folder" --no-fingerprint
-    python mb_lookup.py "C:\\path\\to\\folder" --fpcalc "C:\\path\\to\\fpcalc.exe"
 
 Output:
     Reports saved to: <script folder>\\reports\\mb_lookup_YYYYMMDD_HHMMSS.csv
-
-Changes in v2.0:
-    - Added AcoustID fingerprint lookup as Strategy 0 (highest priority)
-    - Added --fpcalc flag to specify fpcalc.exe path
-    - Added --no-fingerprint flag to skip fingerprinting
-    - Fixed false-positive bug: single results with combined score < 35 now flagged as review
-    - Added acoustid_score column to CSV output
 """
 
 import sys
@@ -47,12 +35,10 @@ import re
 import csv
 import json
 import time
-import subprocess
 import urllib.request
 import urllib.parse
 from pathlib import Path
 from datetime import datetime
-from collections import Counter
 
 # ── Optional mutagen ───────────────────────────────────────────────────────────
 try:
@@ -64,52 +50,48 @@ except ImportError:
     print("         Run: pip install mutagen\n")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-SUPPORTED_EXTENSIONS   = {".mp3", ".flac", ".aac", ".m4a"}
-MB_API_BASE            = "https://musicbrainz.org/ws/2"
-ACOUSTID_API           = "https://api.acoustid.org/v2/lookup"
-ACOUSTID_KEY           = "LA0hhbEjxv"
-FPCALC_DEFAULT         = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\fpcalc.exe"
-USER_AGENT             = "MBLookup/2.0 ( music-tools )"
-REQUEST_DELAY          = 1.1   # MusicBrainz rate limit
-ACOUSTID_DELAY         = 0.4   # AcoustID rate limit
-RESULT_LIMIT           = 10
-FUZZY_THRESHOLD        = 70
-FINGERPRINT_SAMPLE     = 3     # max files to fingerprint per folder
-MIN_SINGLE_MATCH_SCORE = 35    # single-result matches below this → review
-SCRIPT_DIR             = Path(__file__).parent
+SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
+MB_API_BASE          = "https://musicbrainz.org/ws/2"
+USER_AGENT           = "MBLookup/1.0 ( music-tools )"
+REQUEST_DELAY        = 1.1
+RESULT_LIMIT         = 10
+FUZZY_THRESHOLD      = 70
+SCRIPT_DIR           = Path(__file__).parent
 
-# ── Argument parsing ────────────────────────────────────────────────────────────
-def _get_flag_value(flag_name):
-    """Return the value after --flag VALUE, or None."""
-    argv = sys.argv[1:]
-    for i, a in enumerate(argv):
-        if a == flag_name and i + 1 < len(argv):
-            return argv[i + 1]
-    return None
-
-_positional   = [a for a in sys.argv[1:] if not a.startswith("--")]
-_flags        = [a for a in sys.argv[1:] if a.startswith("--")]
-_fpcalc_arg   = _get_flag_value("--fpcalc")
-NO_FINGERPRINT = "--no-fingerprint" in _flags
+# ── Flags ──────────────────────────────────────────────────────────────────────
+_args  = [a for a in sys.argv[1:] if not a.startswith("--")]
+_flags = [a for a in sys.argv[1:] if a.startswith("--")]
 
 
 # ── Folder name parsing ────────────────────────────────────────────────────────
-_BRACKET_RE = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
-_YEAR_RE    = re.compile(r'\b(19|20)\d{2}\b')
-_FORMAT_RE  = re.compile(r'\b(WEB|CD|FLAC|MP3|LOSSLESS|320|V0|VINYL|SACD)\b', re.IGNORECASE)
+
+# Matches anything in square or round brackets e.g. [BH 118-5] or (2008)
+_BRACKET_RE  = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
+_YEAR_RE     = re.compile(r'\b(19|20)\d{2}\b')
+# Format tags at end of folder name
+_FORMAT_RE   = re.compile(r'\b(WEB|CD|FLAC|MP3|LOSSLESS|320|V0|VINYL|SACD)\b', re.IGNORECASE)
 
 
 def parse_folder_name(name):
     """
     Extract year, artist, title, catno from a folder name.
-    Returns dict with keys: year, artist, title, catno, raw
+    Returns dict with keys: year, artist, title, catno, raw_catno
+    All values are strings or empty string if not found.
+
+    Handles patterns like:
+      1999 - DJ Tiesto - Sparkles [BH 118-5] WEB
+      Above & Beyond - Sun & Moon [ANJ196D] (2011)
+      Anjunabeats - Anjunabeats Volume 10
+      Massive Attack - Mezzanine
     """
     result = {"year": "", "artist": "", "title": "", "catno": "", "raw": name}
 
+    # Extract year from brackets or standalone
     year_m = _YEAR_RE.search(name)
     if year_m:
         result["year"] = year_m.group(0)
 
+    # Extract catno from square brackets (not years, not format tags)
     catnos = []
     for m in _BRACKET_RE.finditer(name):
         val = (m.group(1) or m.group(2) or "").strip()
@@ -118,11 +100,13 @@ def parse_folder_name(name):
     if catnos:
         result["catno"] = catnos[0]
 
+    # Strip brackets, format tags, and year to get clean text
     clean = _BRACKET_RE.sub(" ", name)
     clean = _FORMAT_RE.sub(" ", clean)
     clean = _YEAR_RE.sub(" ", clean)
     clean = re.sub(r'\s+', ' ', clean).strip(" -_.")
 
+    # Split on " - " to get artist / title
     parts = [p.strip() for p in clean.split(" - ") if p.strip()]
     if len(parts) >= 2:
         result["artist"] = parts[0]
@@ -159,124 +143,9 @@ def read_folder_metadata(folder_path):
     return result
 
 
-def get_sample_files(folder_path, n=FINGERPRINT_SAMPLE):
-    """Return up to n audio files from the folder for fingerprinting."""
-    files = sorted(
-        f for f in Path(folder_path).iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
-    if not files:
-        return []
-    # Sample evenly across the tracklist
-    if len(files) <= n:
-        return files
-    step = len(files) / n
-    return [files[int(i * step)] for i in range(n)]
-
-
-# ── AcoustID fingerprinting ────────────────────────────────────────────────────
-
-_last_acoustid = 0
-
-
-def run_fpcalc(file_path, fpcalc_path):
-    """Run fpcalc on a file. Returns (fingerprint, duration) or (None, None)."""
-    try:
-        result = subprocess.run(
-            [str(fpcalc_path), "-json", str(file_path)],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            return None, None
-        data = json.loads(result.stdout)
-        return data.get("fingerprint"), data.get("duration")
-    except Exception:
-        return None, None
-
-
-def acoustid_lookup(fingerprint, duration):
-    """Query AcoustID. Returns the parsed JSON response or None."""
-    global _last_acoustid
-    elapsed = time.time() - _last_acoustid
-    if elapsed < ACOUSTID_DELAY:
-        time.sleep(ACOUSTID_DELAY - elapsed)
-    params = urllib.parse.urlencode({
-        "client":      ACOUSTID_KEY,
-        "fingerprint": fingerprint,
-        "duration":    int(duration),
-        "meta":        "recordings releases releasegroups tracks compress",
-    })
-    req = urllib.request.Request(
-        "%s?%s" % (ACOUSTID_API, params),
-        headers={"User-Agent": USER_AGENT}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        _last_acoustid = time.time()
-        return data
-    except Exception:
-        _last_acoustid = time.time()
-        return None
-
-
-def extract_release_ids_from_acoustid(response):
-    """
-    Parse AcoustID response and return a list of (mbid, score) tuples
-    for all release IDs found, ordered by AcoustID score descending.
-    """
-    if not response or response.get("status") != "ok":
-        return []
-    id_scores = []
-    for result in response.get("results", []):
-        acoustid_score = result.get("score", 0)
-        for recording in result.get("recordings", []):
-            for release in recording.get("releases", []):
-                mbid = release.get("id")
-                if mbid:
-                    id_scores.append((mbid, acoustid_score))
-    return id_scores
-
-
-def fingerprint_folder(folder_path, fpcalc_path):
-    """
-    Fingerprint sample files in a folder and return ranked MB release IDs.
-    Returns list of MBIDs sorted by frequency * score, or [] if none found.
-    """
-    sample_files = get_sample_files(folder_path)
-    if not sample_files:
-        return []
-
-    mbid_scores = {}  # mbid → cumulative score
-    mbid_counts = Counter()
-
-    for f in sample_files:
-        fp, dur = run_fpcalc(f, fpcalc_path)
-        if not fp or not dur:
-            continue
-        response = acoustid_lookup(fp, dur)
-        if not response:
-            continue
-        for mbid, score in extract_release_ids_from_acoustid(response):
-            mbid_scores[mbid] = mbid_scores.get(mbid, 0) + score
-            mbid_counts[mbid] += 1
-
-    if not mbid_scores:
-        return []
-
-    # Rank by count first (consensus), then by cumulative score
-    ranked = sorted(
-        mbid_scores.keys(),
-        key=lambda m: (mbid_counts[m], mbid_scores[m]),
-        reverse=True
-    )
-    return ranked
-
-
 # ── MusicBrainz API ────────────────────────────────────────────────────────────
 
 _last_request = 0
-
 
 def mb_get(url):
     global _last_request
@@ -291,8 +160,11 @@ def mb_get(url):
 
 
 def mb_search(query_params):
-    parts  = ['%s:"%s"' % (k, v.replace('"', '\\"')) for k, v in query_params.items()]
-    query  = " AND ".join(parts)
+    """Generic release search. query_params is a dict of Lucene query terms."""
+    parts = []
+    for k, v in query_params.items():
+        parts.append('%s:"%s"' % (k, v.replace('"', '\\"')))
+    query = " AND ".join(parts)
     params = urllib.parse.urlencode({"query": query, "fmt": "json", "limit": str(RESULT_LIMIT)})
     data   = mb_get("%s/release?%s" % (MB_API_BASE, params))
     return data.get("releases", [])
@@ -325,25 +197,6 @@ def mb_fetch_release(mbid):
         return None
 
 
-def build_artist_string(release):
-    """Build artist string from artist-credit array (for direct fetches)."""
-    phrase = release.get("artist-credit-phrase", "")
-    if phrase:
-        return phrase
-    credits = release.get("artist-credit", [])
-    parts = []
-    for c in credits:
-        if isinstance(c, dict):
-            artist = c.get("artist", {})
-            parts.append(artist.get("name", ""))
-            join = c.get("joinphrase", "")
-            if join:
-                parts.append(join)
-        elif isinstance(c, str):
-            parts.append(c)
-    return "".join(parts).strip()
-
-
 # ── Scoring ────────────────────────────────────────────────────────────────────
 
 def fuzzy_score(a, b):
@@ -360,9 +213,13 @@ def normalise(s):
 
 
 def score_release(release, parsed, folder_meta):
-    """Score a release against our search terms. Returns 0–100."""
+    """
+    Score a release against our search terms.
+    Returns 0-100 overall score.
+    """
     score = 0
 
+    # Catno match (highest weight)
     if parsed["catno"]:
         target_norm = normalise(parsed["catno"])
         for li in release.get("label-info", []):
@@ -374,11 +231,13 @@ def score_release(release, parsed, folder_meta):
                 score += 40
                 break
 
+    # Title match
     mb_title = release.get("title", "")
     if parsed["title"] and mb_title:
         ts = fuzzy_score(parsed["title"], mb_title)
         score += int(ts * 0.25)
 
+    # Year match
     mb_date = release.get("date", "") or ""
     if parsed["year"] and mb_date.startswith(parsed["year"]):
         score += 15
@@ -442,14 +301,11 @@ def combined_score(search_score, meta_score):
 
 def release_label(release):
     title  = release.get("title", "Unknown")
-    artist = build_artist_string(release)
+    artist = release.get("artist-credit-phrase", "")
     date   = release.get("date", "")
-    catnos = ", ".join(
-        li.get("catalog-number", "")
-        for li in release.get("label-info", [])
-        if li.get("catalog-number")
-    )
-    parts = [title]
+    label_info = release.get("label-info", [])
+    catnos = ", ".join(li.get("catalog-number","") for li in label_info if li.get("catalog-number"))
+    parts  = [title]
     if artist: parts.append(artist)
     if date:   parts.append(date[:4])
     if catnos: parts.append("[%s]" % catnos)
@@ -482,43 +338,24 @@ def scan_batch_folder(batch_path):
 
 # ── Main lookup ────────────────────────────────────────────────────────────────
 
-def lookup_folder(folder, folder_meta, auto_mode, fpcalc_path):
+def lookup_folder(folder, folder_meta, auto_mode):
     """
     Search MB for a folder using a tiered strategy:
-    0. AcoustID fingerprint (if fpcalc available)
-    1. Catalogue number    (if found in folder name)
-    2. Artist + Title      (if both found in folder name)
-    3. Title only          (from folder name)
-    4. File metadata       (album tag from files)
-
-    Returns (releases, search_method, acoustid_mbids) or ([], "", [])
+    1. Catalogue number (if found in folder name)
+    2. Artist + Title (if both found in folder name)
+    3. Title only
+    4. File metadata (album tag)
+    Returns (releases, search_method) or ([], "")
     """
-    parsed        = parse_folder_name(folder.name)
+    parsed = parse_folder_name(folder.name)
     network_error = None
-    acoustid_mbids = []
-
-    # Strategy 0: AcoustID fingerprint
-    if fpcalc_path and not NO_FINGERPRINT:
-        try:
-            acoustid_mbids = fingerprint_folder(str(folder), fpcalc_path)
-            if acoustid_mbids:
-                releases = []
-                for mbid in acoustid_mbids[:5]:
-                    r = mb_fetch_release(mbid)
-                    if r:
-                        releases.append(r)
-                if releases:
-                    return releases, "acoustid", acoustid_mbids
-        except Exception as e:
-            network_error = str(e)
-            print("          ! AcoustID error: %s" % e)
 
     # Strategy 1: catno
     if parsed["catno"]:
         try:
             releases = mb_search_catno(parsed["catno"])
             if releases:
-                return releases, "catno: %s" % parsed["catno"], acoustid_mbids
+                return releases, "catno: %s" % parsed["catno"]
         except Exception as e:
             network_error = str(e)
 
@@ -527,7 +364,7 @@ def lookup_folder(folder, folder_meta, auto_mode, fpcalc_path):
         try:
             releases = mb_search_artist_title(parsed["artist"], parsed["title"])
             if releases:
-                return releases, "artist+title", acoustid_mbids
+                return releases, "artist+title"
         except Exception as e:
             network_error = str(e)
 
@@ -536,7 +373,7 @@ def lookup_folder(folder, folder_meta, auto_mode, fpcalc_path):
         try:
             releases = mb_search_title_only(parsed["title"])
             if releases:
-                return releases, "title", acoustid_mbids
+                return releases, "title"
         except Exception as e:
             network_error = str(e)
 
@@ -547,28 +384,25 @@ def lookup_folder(folder, folder_meta, auto_mode, fpcalc_path):
                 try:
                     releases = mb_search_title_only(album_tag)
                     if releases:
-                        return releases, "file tag: %s" % album_tag, acoustid_mbids
+                        return releases, "file tag: %s" % album_tag
                 except Exception as e:
                     network_error = str(e)
 
     if network_error:
         raise Exception(network_error)
 
-    return [], "", acoustid_mbids
+    return [], ""
 
 
-def run_lookup(batch_path, auto_mode, fpcalc_path):
+def run_lookup(batch_path, auto_mode):
     folders = scan_batch_folder(batch_path)
     total   = len(folders)
     if total == 0:
         print("  No music subfolders found in: %s" % batch_path)
         return []
 
-    fingerprint_active = bool(fpcalc_path) and not NO_FINGERPRINT
-
     print()
     print("  Found %d release folder(s) to process." % total)
-    print("  Fingerprinting: %s" % ("enabled" if fingerprint_active else "disabled"))
     print()
 
     rows = []
@@ -587,27 +421,22 @@ def run_lookup(batch_path, auto_mode, fpcalc_path):
         ))
 
         try:
-            releases, search_method, acoustid_mbids = lookup_folder(
-                folder, folder_meta, auto_mode, fpcalc_path
-            )
+            releases, search_method = lookup_folder(folder, folder_meta, auto_mode)
         except Exception as e:
             network_error = str(e)
-            releases       = []
-            search_method  = ""
-            acoustid_mbids = []
+            releases      = []
+            search_method = ""
 
         if network_error and not releases:
             print("          ! Network error: %s" % network_error)
             rows.append(_make_row(folder, parsed, "error", {}, "", [], folder_meta,
-                                  "Network error: %s" % network_error, search_method,
-                                  acoustid_mbids=acoustid_mbids))
+                                  "Network error: %s" % network_error, search_method))
             continue
 
         if not releases:
             print("          ✗ Not found on MusicBrainz")
             rows.append(_make_row(folder, parsed, "not_found", {}, "", [], folder_meta,
-                                  "No results found", search_method,
-                                  acoustid_mbids=acoustid_mbids))
+                                  "No results found", search_method))
             continue
 
         print("          ~ %d result(s) via %s" % (len(releases), search_method))
@@ -618,15 +447,13 @@ def run_lookup(batch_path, auto_mode, fpcalc_path):
             key=lambda x: -x[0]
         )
 
-        # For AcoustID results the release IS the full detail already
-        acoustid_mode = search_method == "acoustid"
-
+        # Fetch full details for scoring
         candidates_detail = []
         for ss, r in scored:
             mbid   = r.get("id", "")
-            detail = r if acoustid_mode else (mb_fetch_release(mbid) if mbid else None)
+            detail = mb_fetch_release(mbid) if mbid else None
             ms     = score_metadata(folder_meta, detail)
-            mb_tc  = sum(len(m.get("tracks", [])) for m in detail.get("media", [])) if detail else ""
+            mb_tc  = sum(len(m.get("tracks",[])) for m in detail.get("media",[])) if detail else ""
             combo  = combined_score(ss, ms["score"])
             candidates_detail.append({
                 "release":      r,
@@ -648,22 +475,12 @@ def run_lookup(batch_path, auto_mode, fpcalc_path):
         for c in candidates_detail:
             r = c["release"]
             candidate_parts.append("%s|%s|%s|search:%d meta:%d combined:%d" % (
-                r.get("id", ""), release_label(r), get_mb_catnos(r),
+                r.get("id",""), release_label(r), get_mb_catnos(r),
                 c["search_score"], c["meta_score"], c["combined"],
             ))
         candidates_str = "||".join(candidate_parts)
 
-        # Determine status
-        single_result = len(releases) == 1
-        low_confidence = best["combined"] < MIN_SINGLE_MATCH_SCORE
-
-        if single_result and low_confidence:
-            status = "review"
-            notes  = "Single result via %s — low confidence (combined %d) — %s" % (
-                search_method, best["combined"], best["meta_details"])
-            print("          ? LOW-CONF  %s  [combined:%d]  [MBID: %s]" % (
-                release_label(best_r), best["combined"], best_id))
-        elif single_result:
+        if len(releases) == 1:
             status = "matched"
             notes  = "Single result via %s — %s" % (search_method, best["meta_details"])
             print("          ✓ %s  [combined:%d]  [MBID: %s]" % (
@@ -683,18 +500,17 @@ def run_lookup(batch_path, auto_mode, fpcalc_path):
 
         rows.append(_make_row(
             folder, parsed, status,
-            best_r if status not in ("review",) else {},
-            best_id if status not in ("review",) else "",
+            best_r if status != "review" else {},
+            best_id if status != "review" else "",
             candidates_detail, folder_meta, notes, search_method,
             best=best, candidates_str=candidates_str,
-            acoustid_mbids=acoustid_mbids,
         ))
 
     return rows
 
 
 def _make_row(folder, parsed, status, release, mbid, candidates_detail, folder_meta,
-              notes, search_method, best=None, candidates_str="", acoustid_mbids=None):
+              notes, search_method, best=None, candidates_str=""):
     r = release or {}
     return {
         "folder":          folder.name,
@@ -707,7 +523,7 @@ def _make_row(folder, parsed, status, release, mbid, candidates_detail, folder_m
         "status":          status,
         "mbid":            mbid or "",
         "mb_title":        r.get("title", ""),
-        "mb_artist":       build_artist_string(r) if r else "",
+        "mb_artist":       r.get("artist-credit-phrase", ""),
         "mb_date":         r.get("date", ""),
         "mb_catnos":       get_mb_catnos(r) if r else "",
         "search_score":    str(best["search_score"]) if best else "",
@@ -717,7 +533,6 @@ def _make_row(folder, parsed, status, release, mbid, candidates_detail, folder_m
         "count_match":     str(best["count_match"]) if best else "",
         "local_tracks":    str(folder_meta["track_count"]),
         "mb_tracks":       str(best["mb_tracks"]) if best else "",
-        "acoustid_mbids":  "|".join((acoustid_mbids or [])[:5]),
         "candidates":      candidates_str,
         "notes":           notes,
     }
@@ -732,9 +547,8 @@ FIELDNAMES = [
     "mb_title", "mb_artist", "mb_date", "mb_catnos",
     "search_score", "meta_score", "combined_score",
     "track_match_pct", "count_match", "local_tracks", "mb_tracks",
-    "acoustid_mbids", "candidates", "notes",
+    "candidates", "notes",
 ]
-
 
 def write_csv(rows, output_path):
     with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
@@ -744,6 +558,7 @@ def write_csv(rows, output_path):
 
 
 def print_summary(rows, auto_mode, output_path):
+    from collections import Counter
     counts = Counter(r["status"] for r in rows)
     print()
     print("=" * 60)
@@ -765,22 +580,6 @@ def print_summary(rows, auto_mode, output_path):
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
-    # Resolve fpcalc path
-    if _fpcalc_arg:
-        fpcalc_path = Path(_fpcalc_arg)
-    else:
-        fpcalc_path = Path(FPCALC_DEFAULT)
-
-    if NO_FINGERPRINT:
-        fpcalc_path = None
-        print("  Fingerprinting disabled (--no-fingerprint)")
-    elif not fpcalc_path.exists():
-        print("  WARNING: fpcalc not found at: %s" % fpcalc_path)
-        print("           Fingerprinting will be skipped.")
-        print("           Use --fpcalc PATH to specify location, or --no-fingerprint to suppress this warning.")
-        fpcalc_path = None
-
-    # Auto/review mode
     if "--auto" in _flags:
         auto_mode = True
     elif "--review" in _flags:
@@ -799,8 +598,7 @@ def main():
             elif choice == "2": auto_mode = False; break
             print("  Please enter 1 or 2.")
 
-    # Folder selection
-    if not _positional:
+    if not _args:
         try:
             import tkinter as tk
             from tkinter import filedialog
@@ -820,7 +618,7 @@ def main():
             print("ERROR: Could not open folder picker: %s" % e)
             sys.exit(1)
     else:
-        batch_path = Path(_positional[0].strip('"'))
+        batch_path = Path(_args[0].strip('"'))
 
     if not batch_path.exists() or not batch_path.is_dir():
         print("ERROR: Folder not found: %s" % batch_path)
@@ -834,16 +632,15 @@ def main():
 
     print()
     print("=" * 60)
-    print("  MusicBrainz Batch Lookup  v2.0")
+    print("  MusicBrainz Batch Lookup  v1.0")
     print("=" * 60)
-    print("  Folder        : %s" % batch_path)
-    print("  Mode          : %s" % mode_label)
-    print("  Fingerprinting: %s" % ("enabled (%s)" % fpcalc_path if fpcalc_path else "disabled"))
-    print("  Metadata      : %s" % ("enabled" if MUTAGEN_AVAILABLE else "disabled"))
-    print("  Output        : %s" % output_path)
+    print("  Folder    : %s" % batch_path)
+    print("  Mode      : %s" % mode_label)
+    print("  Metadata  : %s" % ("enabled" if MUTAGEN_AVAILABLE else "disabled"))
+    print("  Output    : %s" % output_path)
     print("=" * 60)
 
-    rows = run_lookup(str(batch_path), auto_mode, fpcalc_path)
+    rows = run_lookup(str(batch_path), auto_mode)
 
     if rows:
         write_csv(rows, str(output_path))

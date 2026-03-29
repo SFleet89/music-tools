@@ -29,6 +29,19 @@
 
 ## mb_lookup.py
 
+### v2.0 — 2026-03-29
+
+#### Changed
+- **AcoustID fingerprinting added as Strategy 0** (highest priority). Samples up to 3 files per folder, queries AcoustID, collects MB release IDs by consensus across tracks, then scores them through the existing pipeline.
+- **False positive fix** — single-result matches with a combined score below 35 are now flagged as `review` (LOW-CONF) instead of `matched`. Fixes cases like Numbernin6 where a single irrelevant MB result was being accepted.
+- Fixed artist string extraction for releases fetched directly by MBID (was returning blank).
+- Added `acoustid_mbids` column to CSV output.
+
+#### Added
+- `--fpcalc PATH` flag — specify fpcalc.exe location (defaults to shared tools folder).
+- `--no-fingerprint` flag — skip AcoustID entirely for faster runs.
+- Graceful warning if fpcalc.exe not found — continues without fingerprinting instead of crashing.
+
 ### v1.0 — 2026-03-23
 
 #### Added
@@ -45,6 +58,16 @@
 - Same CSV output format — compatible with anjuna_lookup_viewer.html and mb_tagger.py.
 - Auto-pick and manual review modes.
 - Folder picker dialog when no path specified.
+
+---
+
+## tiesto_lookup.py
+
+### v1.0 — 2026-03-29
+
+#### Added
+- Renamed from mb_lookup.py v1.0 — no code changes.
+- Preserved as a dedicated script for the Tiesto collection, which uses a consistent `Year - Artist - Title [CatNo] Format` folder naming convention that the original parser handles well.
 
 ---
 
