@@ -641,7 +641,7 @@ def main():
             sys.exit(0)
 
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    reports_dir = SCRIPT_DIR / "reports"
+    reports_dir = SCRIPT_DIR.parent / "reports"
     reports_dir.mkdir(exist_ok=True)
     output_path = reports_dir / ("anjuna_lookup_%s.csv" % timestamp)
 
