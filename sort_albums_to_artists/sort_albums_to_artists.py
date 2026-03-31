@@ -56,7 +56,7 @@ except ImportError:
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\sort_albums_to_artists\reports"
+REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
 SUPPORTED_EXT   = {".mp3", ".flac", ".aac", ".m4a"}
 
 # ── Flags ──────────────────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\filename_scanner\reports"
+REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
 SKIP_LIST_FILE  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\filename_scanner\scan_skip_list.txt"
 
 # ── Parse flags ────────────────────────────────────────────────────────────────

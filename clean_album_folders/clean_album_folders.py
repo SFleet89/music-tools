@@ -34,7 +34,7 @@ from collections import Counter
 # ── Config ─────────────────────────────────────────────────────────────────────
 DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
 HOLDING_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\clean_album_folders\holding"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\clean_album_folders\reports"
+REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
 
 # Music file extensions — always kept
 MUSIC_EXT = {

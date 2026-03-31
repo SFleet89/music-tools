@@ -37,7 +37,7 @@ _cfg_flag  = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 DEFAULT_CONFIG  = "scan_music_filenames.py"   # read REPORTS_FOLDER constant from script
-FALLBACK_REPORTS = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\filename_scanner\reports"
+FALLBACK_REPORTS = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
 
 def get_reports_folder() -> Path:
     if _path_flag:

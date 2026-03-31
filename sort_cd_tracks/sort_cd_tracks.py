@@ -47,7 +47,7 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-REPORTS_FOLDER = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\sort_cd_tracks\reports"
+REPORTS_FOLDER = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
 SUPPORTED_EXT  = {".mp3", ".flac", ".aac", ".m4a"}
 
 # ── Flags ──────────────────────────────────────────────────────────────────────
