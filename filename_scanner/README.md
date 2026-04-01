@@ -103,6 +103,19 @@ python scan_progress.py --first-vs-last      # first vs latest only
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Scan Filenames.bat` | Scan your library for filename issues |
+| `Run - Scan Progress.bat` | Analyse progress across all scan reports |
+| `Run - Fix Double Spaces (Dry Run).bat` | Preview double space fixes |
+| `Run - Fix Double Spaces (Apply).bat` | Apply double space fixes |
+
+---
+
 ## Files
 
 | File | Description |

@@ -175,6 +175,19 @@ MP3, FLAC, AAC, M4A
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Rename Album Folders (Dry Run).bat` | Preview album folder renames |
+| `Run - Rename Album Folders (Apply).bat` | Rename album folders to match album tag |
+| `Run - Rename CD Folders (Dry Run).bat` | Preview CD folder renames |
+| `Run - Rename CD Folders (Apply).bat` | Rename CD folders |
+
+---
+
 ## Files
 
 | File | Description |

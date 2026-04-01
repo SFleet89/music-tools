@@ -147,6 +147,18 @@ Fingerprint matches are grouped by confidence tier in the review viewer:
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Find Duplicates.bat` | Run the duplicate finder |
+| `Run - Build Cache.bat` | Build metadata and fingerprint caches |
+| `Run - Undo Duplicates.bat` | Restore files from a previous run |
+
+---
+
 ## Files
 
 | File | Description |

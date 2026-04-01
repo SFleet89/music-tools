@@ -141,6 +141,17 @@ MP3, FLAC, AAC, M4A
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Sort Albums to Artists (Dry Run).bat` | Preview which albums would be moved |
+| `Run - Sort Albums to Artists (Apply).bat` | Move albums into artist folders |
+
+---
+
 ## Files
 
 | File | Description |

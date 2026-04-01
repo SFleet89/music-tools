@@ -106,6 +106,17 @@ MP3, FLAC, AAC, M4A
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Sort CD Tracks (Dry Run).bat` | Preview which files would be sorted |
+| `Run - Sort CD Tracks (Apply).bat` | Sort files into CD subfolders |
+
+---
+
 ## Files
 
 | File | Description |

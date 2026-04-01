@@ -111,6 +111,18 @@ If you point `fingerprint.fp_cache_file` at the same file used by the duplicate 
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Find Library Dupes.bat` | Scan library for cross-folder duplicates |
+| `Run - Remove Library Dupes (Dry Run).bat` | Preview which files would be moved |
+| `Run - Remove Library Dupes (Apply).bat` | Move flagged duplicates to holding folder |
+
+---
+
 ## Files
 
 | File | Description |

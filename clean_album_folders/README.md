@@ -102,6 +102,17 @@ MP3, FLAC, AAC, M4A, OGG, WMA, WAV, AIFF, APE, OPUS, WavPack
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Clean Album Folders (Dry Run).bat` | Preview which files would be moved |
+| `Run - Clean Album Folders (Apply).bat` | Move non-music files to holding folder |
+
+---
+
 ## Files
 
 | File | Description |

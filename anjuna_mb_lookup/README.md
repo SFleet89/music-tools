@@ -170,6 +170,22 @@ MP3, FLAC, AAC, M4A
 
 ---
 
+## Running without the command line
+
+Double-click any `.bat` file to open a terminal and run the script automatically:
+
+| File | Action |
+|---|---|
+| `Run - Anjuna Lookup.bat` | Run Anjuna batch lookup |
+| `Run - Anjuna Tagger (Dry Run).bat` | Preview Anjuna tag changes |
+| `Run - Anjuna Tagger (Apply).bat` | Apply Anjuna tags |
+| `Run - MB Lookup.bat` | Run general-purpose lookup |
+| `Run - MB Tagger (Dry Run).bat` | Preview MB tag changes |
+| `Run - MB Tagger (Apply).bat` | Apply MB tags |
+| `Run - Tiesto Lookup.bat` | Run Tiesto collection lookup |
+
+---
+
 ## Files
 
 | File | Description |
