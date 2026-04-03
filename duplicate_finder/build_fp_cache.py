@@ -1,5 +1,5 @@
 """
-Music Cache Builder  v1.0
+Music Cache Builder  v2.0
 ==========================
 Pre-builds the cache files used by find_music_duplicates.py so that duplicate
 scans start fast and the fingerprint pass runs near-instantly.
@@ -45,6 +45,7 @@ import json
 import csv
 import re
 import hashlib
+import shutil
 import threading
 import subprocess
 from pathlib import Path
@@ -68,8 +69,10 @@ except ImportError:
     HAS_TQDM = False
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
-FP_MIN_LENGTH        = 50      # fingerprints shorter than this are flagged as invalid
+SUPPORTED_EXTENSIONS   = {".mp3", ".flac", ".aac", ".m4a"}
+FP_MIN_LENGTH          = 50      # fingerprints shorter than this are flagged as invalid
+TOO_SMALL_DURATION_SEC = 30.0    # files shorter than this (seconds) → classified as too_small
+TOO_SMALL_SIZE_BYTES   = 500_000 # fallback if duration unreadable: files smaller than this → too_small
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -100,11 +103,16 @@ def get_config_path() -> str:
 
 
 # ── Parse CLI flags ────────────────────────────────────────────────────────────
-REBUILD      = "--rebuild"      in sys.argv
+REBUILD      = "--rebuild"       in sys.argv
 META_ONLY    = "--metadata-only" in sys.argv
-FP_ONLY      = "--fp-only"      in sys.argv
+FP_ONLY      = "--fp-only"       in sys.argv
 BUILD_META   = not FP_ONLY
 BUILD_FP     = not META_ONLY
+COPY_ERRORS  = "--copy-errors"   in sys.argv
+APPLY        = "--apply"         in sys.argv
+
+_error_dest_arg = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
+                        if a == "--error-dest" and i+1 < len(sys.argv)), None)
 
 _path_arg    = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
                      if a == "--path" and i+1 < len(sys.argv)), None)
@@ -292,6 +300,38 @@ def is_valid_fingerprint(fp: str) -> bool:
         return False
 
 
+def get_duration(path: Path) -> float | None:
+    """Return audio duration in seconds via mutagen, or None if unreadable."""
+    try:
+        audio = MutagenFile(path)
+        if audio and hasattr(audio, "info") and hasattr(audio.info, "length"):
+            return audio.info.length
+    except Exception:
+        pass
+    return None
+
+
+def classify_warning(path_str: str) -> str:
+    """
+    Classify a fingerprint warning as 'too_small' or 'corrupted'.
+
+    too_small  — file is too short to produce a meaningful fingerprint
+                 (duration < TOO_SMALL_DURATION_SEC, or tiny file if duration unreadable)
+    corrupted  — file appears normal-sized but fingerprinting failed or returned
+                 a suspiciously short result, suggesting audio data is damaged
+    """
+    p = Path(path_str)
+    try:
+        duration = get_duration(p)
+        if duration is not None:
+            return "too_small" if duration < TOO_SMALL_DURATION_SEC else "corrupted"
+        # Duration unreadable — fall back to file size
+        size = p.stat().st_size
+        return "too_small" if size < TOO_SMALL_SIZE_BYTES else "corrupted"
+    except Exception:
+        return "corrupted"
+
+
 def build_fingerprint_cache(
     folder: Path,
     existing_cache: dict,
@@ -350,10 +390,11 @@ def build_fingerprint_cache(
 #  WARNINGS CSV
 # ══════════════════════════════════════════════════════════════════════════════
 
-def write_warnings_csv(csv_path: Path, warnings: list, organized_root: Path):
-    fieldnames = ["Folder", "Filename", "Full Path", "Reason", "Fingerprint Length"]
+def write_warnings_csv(csv_path: Path, warnings_classified: list, organized_root: Path):
+    """warnings_classified: list of (path_str, reason, category) tuples."""
+    fieldnames = ["Category", "Folder", "Filename", "Full Path", "Reason", "Fingerprint Length"]
     rows = []
-    for path_str, reason in warnings:
+    for path_str, reason, category in warnings_classified:
         p = Path(path_str)
         try:
             folder = str(p.parent.relative_to(organized_root))
@@ -363,17 +404,104 @@ def write_warnings_csv(csv_path: Path, warnings: list, organized_root: Path):
         fp_len = int(m.group(1)) if m else ""
         clean_reason = re.sub(r'\s*\(\d+ integers?\)', '', reason).strip()
         rows.append({
+            "Category":           category,
             "Folder":             folder,
             "Filename":           p.name,
             "Full Path":          path_str,
             "Reason":             clean_reason,
             "Fingerprint Length": fp_len,
         })
-    rows.sort(key=lambda r: (r["Reason"], r["Folder"], r["Filename"]))
+    rows.sort(key=lambda r: (r["Category"], r["Reason"], r["Folder"], r["Filename"]))
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def copy_error_files(
+    warnings_classified: list,
+    error_dest: Path,
+    organized_root: Path,
+    apply: bool,
+):
+    """
+    Copy flagged files into error_dest/too_small/ and error_dest/corrupted/,
+    preserving relative folder structure.
+
+    Dry run (apply=False): prints a plan, copies nothing.
+    Live run (apply=True): creates folders and copies files.
+    """
+    too_small = [(p, r) for p, r, c in warnings_classified if c == "too_small"]
+    corrupted = [(p, r) for p, r, c in warnings_classified if c == "corrupted"]
+
+    dest_small = error_dest / "too_small"
+    dest_corrupt = error_dest / "corrupted"
+
+    print(f"\n── Error File Copy {'(DRY RUN)' if not apply else '(LIVE)'}" + " ─" * 10 + "\n")
+
+    if not apply:
+        print(f"  Add --apply to actually copy files.\n")
+
+    print(f"  Destination  : {error_dest}")
+    print(f"  Too small    : {len(too_small)} file(s) → too_small\\")
+    print(f"  Corrupted    : {len(corrupted)} file(s) → corrupted\\")
+
+    if not apply:
+        if too_small:
+            print(f"\n  Would copy to too_small\\:")
+            for path_str, _ in too_small:
+                p = Path(path_str)
+                try:
+                    rel = p.relative_to(organized_root)
+                except ValueError:
+                    rel = Path(p.name)
+                print(f"    {rel}")
+        if corrupted:
+            print(f"\n  Would copy to corrupted\\:")
+            for path_str, _ in corrupted:
+                p = Path(path_str)
+                try:
+                    rel = p.relative_to(organized_root)
+                except ValueError:
+                    rel = Path(p.name)
+                print(f"    {rel}")
+        return
+
+    # ── Live copy ──────────────────────────────────────────────────────────────
+    copied = 0
+    skipped = 0
+    errors = []
+
+    for category_list, dest_dir in [(too_small, dest_small), (corrupted, dest_corrupt)]:
+        if not category_list:
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for path_str, _ in category_list:
+            p = Path(path_str)
+            if not p.exists():
+                errors.append(f"Source not found: {path_str}")
+                skipped += 1
+                continue
+            try:
+                rel = p.relative_to(organized_root)
+            except ValueError:
+                rel = Path(p.name)
+            dest_file = dest_dir / rel
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            if dest_file.exists():
+                skipped += 1
+                continue
+            shutil.copy2(p, dest_file)
+            copied += 1
+
+    print(f"\n  Copied  : {copied} file(s)")
+    if skipped:
+        print(f"  Skipped : {skipped} (already exist or source missing)")
+    if errors:
+        print(f"  Errors  :")
+        for e in errors:
+            print(f"    ! {e}")
+    print(f"\n  Review at: {error_dest}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -467,13 +595,24 @@ def main():
             if FP_CACHE.exists():
                 print(f"  Cache file size : {fmt_size(FP_CACHE.stat().st_size)}")
 
-            # ── Print and save warnings ────────────────────────────────────────
-            if warnings:
-                print(f"\n  WARNING: {len(warnings)} file(s) flagged:\n")
-                for path_str, reason in warnings:
-                    print(f"    ! {Path(path_str).name}")
-                    print(f"      {reason}")
-                    print(f"      {path_str}")
+            # ── Classify warnings and print ────────────────────────────────────
+            warnings_classified = [
+                (path_str, reason, classify_warning(path_str))
+                for path_str, reason in warnings
+            ]
+
+            if warnings_classified:
+                too_small_count = sum(1 for _, _, c in warnings_classified if c == "too_small")
+                corrupted_count = sum(1 for _, _, c in warnings_classified if c == "corrupted")
+
+                print(f"\n  WARNING: {len(warnings_classified)} file(s) flagged:")
+                print(f"    too_small : {too_small_count}  (too short to fingerprint)")
+                print(f"    corrupted : {corrupted_count}  (normal-sized but fingerprint failed)\n")
+
+                for path_str, reason, category in warnings_classified:
+                    print(f"    [{category:>9}]  {Path(path_str).name}")
+                    print(f"               {reason}")
+                    print(f"               {path_str}")
 
                 if REPORTS_DIR:
                     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -481,8 +620,19 @@ def main():
                 else:
                     warn_csv = Path(f"fp_warnings_{timestamp}.csv")
 
-                write_warnings_csv(warn_csv, warnings, ORGANIZED)
+                write_warnings_csv(warn_csv, warnings_classified, ORGANIZED)
                 print(f"\n  Warnings saved to: {warn_csv}")
+
+                # ── Optional error file copy ───────────────────────────────────
+                if COPY_ERRORS:
+                    error_dest = (
+                        Path(_error_dest_arg) if _error_dest_arg
+                        else (REPORTS_DIR / "fp_errors" if REPORTS_DIR else Path("fp_errors"))
+                    )
+                    copy_error_files(warnings_classified, error_dest, ORGANIZED, apply=APPLY)
+                elif not APPLY:
+                    print(f"\n  Tip: run with --copy-errors to copy flagged files for review.")
+                    print(f"       Add --apply to actually copy.")
             else:
                 print(f"\n  No fingerprint warnings — all files processed cleanly.")
 

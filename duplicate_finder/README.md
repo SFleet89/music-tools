@@ -107,6 +107,23 @@ python build_fp_cache.py --fp-only        # fingerprint cache only
 python build_fp_cache.py --rebuild        # wipe and rebuild from scratch
 ```
 
+Any files that fail fingerprinting are flagged and saved to a warnings CSV. They are classified into two categories:
+
+| Category | Meaning |
+|---|---|
+| `too_small` | File is under 30 seconds or 500 KB — too short to fingerprint. Usually interludes or short clips. |
+| `corrupted` | Normal-sized file where fingerprinting failed or returned a suspiciously short result. Worth inspecting. |
+
+To copy flagged files into separate review folders:
+
+```
+python build_fp_cache.py --fp-only --copy-errors              # dry run — shows what would be copied
+python build_fp_cache.py --fp-only --copy-errors --apply      # actually copies
+python build_fp_cache.py --fp-only --copy-errors --apply --error-dest "C:\Review\FP Errors"
+```
+
+Or double-click `Run - Copy FP Errors (Apply).bat`.
+
 ---
 
 ## Undoing a run
