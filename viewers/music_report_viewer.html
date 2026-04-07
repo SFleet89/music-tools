@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Music Duplicate Report Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e2e8f0; display: flex; flex-direction: column; }
+
+  header { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 17px; font-weight: 600; color: #fff; }
+  header span { font-size: 13px; color: #64748b; margin-left: 4px; }
+  .hbtn { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 7px; color: #94a3b8; cursor: pointer; font-size: 12px; padding: 6px 12px; transition: all 0.15s; }
+  .hbtn:hover { border-color: #6366f1; color: #e2e8f0; }
+  #load-new { margin-left: auto; }
+
+  #drop-zone { margin: 40px auto; border: 2px dashed #2d3148; border-radius: 16px; padding: 100px 60px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+  #drop-zone:hover, #drop-zone.drag-over { border-color: #6366f1; background: #1a1d2e; }
+  #drop-zone svg { margin-bottom: 16px; opacity: 0.4; }
+  #drop-zone p { color: #94a3b8; font-size: 14px; line-height: 1.7; }
+  #drop-zone strong { color: #e2e8f0; }
+  #file-input { display: none; }
+
+  #app { display: none; padding: 20px 24px 90px;  flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+
+  /* ── Stats ── */
+  .stats { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stat-pill { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 20px; padding: 5px 14px; font-size: 12px; display: flex; align-items: center; gap: 7px; cursor: pointer; transition: border-color 0.15s; white-space: nowrap; }
+  .stat-pill:hover { border-color: #6366f1; }
+  .stat-pill.active { border-color: #6366f1; background: #1e2044; }
+  .stat-pill .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .stat-pill .count { font-weight: 600; color: #fff; }
+
+  /* ── FP Tier pills ── */
+  .tier-pills { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .tier-label { font-size: 11px; color: #475569; }
+  .tier-pill { padding: 4px 12px; border-radius: 16px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid; transition: all 0.15s; user-select: none; }
+  .tier-pill.inactive { background: #1a1d2e !important; border-color: #2d3148 !important; color: #374151 !important; }
+  .tier-high   { background: #14532d22; border-color: #16a34a; color: #86efac; }
+  .tier-medium { background: #78350f22; border-color: #d97706; color: #fbbf24; }
+  .tier-low    { background: #7c2d1222; border-color: #dc2626; color: #fca5a5; }
+
+  /* ── Controls ── */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
+  input[type=text], select { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; color: #e2e8f0; padding: 8px 12px; font-size: 13px; outline: none; cursor: pointer; }
+  input[type=text] { width: 240px; cursor: text; }
+  input[type=text]:focus, select:focus { border-color: #6366f1; }
+  .btn { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; color: #94a3b8; padding: 8px 14px; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .btn:hover { color: #e2e8f0; border-color: #6366f1; }
+  #row-count { font-size: 13px; color: #64748b; margin-bottom: 10px; }
+
+  /* ── Table ── */
+  .table-wrap { flex: 1; min-height: 0; overflow-x: auto; border-radius: 10px; border: 1px solid #2d3148; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: #1a1d2e; color: #94a3b8; font-weight: 500; padding: 10px 14px; text-align: left; white-space: nowrap; cursor: pointer; user-select: none; border-bottom: 1px solid #2d3148; position: sticky; top: 0; z-index: 1; }
+  thead th:hover { color: #e2e8f0; }
+  thead th.sorted { color: #a5b4fc; }
+  thead th.nosort { cursor: default; }
+  thead th.nosort:hover { color: #94a3b8; }
+  .sort-icon { margin-left: 4px; opacity: 0.35; font-size: 10px; }
+  thead th.sorted .sort-icon { opacity: 1; }
+  tbody tr { border-bottom: 1px solid #181c28; transition: background 0.1s; }
+  tbody tr:hover { background: #1a1d2e55; }
+  tbody tr.decided { background: #0d1a0d; }
+  tbody td { padding: 9px 14px; vertical-align: top; }
+  .path-cell { font-family: "Consolas","Courier New",monospace; font-size: 11px; color: #64748b; word-break: break-all; max-width: 280px; }
+  .path-cell .fname { color: #e2e8f0; font-size: 12px; }
+  .tags-cell { font-size: 11px; color: #64748b; }
+
+  /* ── Badges ── */
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+  .badge-exact   { background: #14532d; color: #86efac; }
+  .badge-dup     { background: #1e3a5f; color: #93c5fd; }
+  .badge-better  { background: #3b1f6e; color: #c4b5fd; }
+  .badge-nomatch { background: #1f2937; color: #9ca3af; }
+  .badge-fp-high { background: #14532d22; border: 1px solid #16a34a; color: #86efac; }
+  .badge-fp-med  { background: #78350f22; border: 1px solid #d97706; color: #fbbf24; }
+  .badge-fp-low  { background: #7c2d1222; border: 1px solid #dc2626; color: #fca5a5; }
+  .badge-method  { background: #1f2937; color: #64748b; font-size: 11px; }
+
+  /* ── Decision buttons ── */
+  .dec-cell { white-space: nowrap; vertical-align: middle !important; }
+  .dec-btn { font-size: 11px; padding: 3px 9px; border-radius: 5px; cursor: pointer; border: 1px solid; background: none; transition: all 0.12s; margin-right: 3px; margin-bottom: 2px; display: inline-block; }
+  .dec-keep-u  { border-color: #1d4ed8; color: #60a5fa; }
+  .dec-keep-u:hover, .dec-keep-u.active { background: #1d4ed822; color: #93c5fd; border-color: #3b82f6; }
+  .dec-keep-l  { border-color: #7c3aed; color: #a78bfa; }
+  .dec-keep-l:hover, .dec-keep-l.active { background: #7c3aed22; color: #c4b5fd; border-color: #8b5cf6; }
+  .dec-skip    { border-color: #374151; color: #6b7280; }
+  .dec-skip:hover, .dec-skip.active { background: #37415122; color: #9ca3af; }
+  .decided-mark { font-size: 11px; color: #34d399; display: block; margin-top: 3px; }
+
+  .no-results { text-align: center; padding: 56px; color: #4b5563; font-size: 14px; }
+
+  /* ── Decision panel ── */
+  #dec-panel { position: fixed; bottom: 0; left: 0; right: 0; background: #1a1d2e; border-top: 1px solid #2d3148; padding: 12px 24px; display: flex; align-items: center; gap: 16px; z-index: 50; }
+  #dec-panel.hidden { display: none; }
+  .dp-stat { font-size: 13px; color: #64748b; }
+  .dp-stat strong { color: #e2e8f0; }
+  .dp-btn { padding: 8px 16px; border-radius: 7px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid; transition: all 0.15s; }
+  .dp-secondary { background: #1e2235; border-color: #2d3148; color: #94a3b8; }
+  .dp-secondary:hover { border-color: #6366f1; color: #e2e8f0; }
+  .dp-primary { background: #6366f1; border-color: #6366f1; color: #fff; margin-left: auto; }
+  .dp-primary:hover { background: #4f46e5; }
+  .dp-primary:disabled { opacity: 0.35; cursor: default; }
+
+  #toast { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%) translateY(10px); background: #1a1d2e; border: 1px solid #6366f1; color: #e2e8f0; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 100; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .font-ctrl { display:flex; gap:2px; margin-left:4px; }
+  .font-btn { background:#1a1d2e; border:1px solid #2d3148; border-radius:6px; color:#94a3b8; padding:4px 10px; font-size:12px; cursor:pointer; transition:all .15s; line-height:1.4; }
+  .font-btn:hover { border-color:#6366f1; color:#e2e8f0; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#6366f1" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+  </svg>
+  <h1>Music Duplicate Report Viewer</h1>
+  <span id="header-file"></span>
+  <button id="load-new" class="hbtn" style="display:none" onclick="resetViewer()">⟳ Load new report</button>
+  <div class="font-ctrl"><button class="font-btn" onclick="changeFontSize(-1)" title="Decrease font size">A−</button><button class="font-btn" onclick="changeFontSize(1)" title="Increase font size">A+</button></div>
+</header>
+
+<div id="drop-zone" onclick="document.getElementById('file-input').click()">
+  <svg width="44" height="44" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+  </svg>
+  <p><strong>Drop your music_report CSV here</strong><br>or click to browse<br><br>
+  Works with any <code>music_report_*_dry_*.csv</code><br>
+  For browser review: run with <code>--dry-run --no-review</code> first</p>
+  <input type="file" id="file-input" accept=".csv">
+</div>
+
+<div id="app">
+  <div class="stats" id="stats"></div>
+  <div class="tier-pills" id="tier-pills" style="display:none">
+    <span class="tier-label">FP confidence:</span>
+  </div>
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search filename, artist, album…">
+    <select id="filter-category"><option value="">All categories</option></select>
+    <select id="filter-method"><option value="">All match methods</option></select>
+    <select id="filter-action"><option value="">All actions</option></select>
+    <button class="btn" onclick="clearFilters()">Clear filters</button>
+  </div>
+  <div id="row-count"></div>
+  <div class="table-wrap">
+    <table>
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="no-results" id="no-results" style="display:none">No rows match your filters.</div>
+  </div>
+</div>
+
+<!-- Decision panel -->
+<div id="dec-panel" class="hidden">
+  <span class="dp-stat">Decided: <strong id="dp-decided">0</strong></span>
+  <span class="dp-stat">Pending: <strong id="dp-pending">0</strong></span>
+  <button class="dp-btn dp-secondary" onclick="clearDecisions()">Clear all</button>
+  <button class="dp-btn dp-primary" id="dp-download" onclick="downloadDecisions()" disabled>Download decisions CSV</button>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+let allRows  = [];
+let sortCol  = null;
+let sortAsc  = true;
+let decisions = {};   // rowKey → { choice: 'unsorted'|'library'|'skip' }
+let activeTiers = new Set();  // 'high'|'medium'|'low'
+
+const CAT_COLORS = {
+  'Exact Match':          '#86efac',
+  'DUPLICATE':            '#93c5fd',
+  'Standard Duplicate':   '#93c5fd',
+  'BETTER QUALITY':       '#c4b5fd',
+  'Higher Quality Match': '#c4b5fd',
+  'No Match':             '#6b7280',
+};
+const CAT_BADGE = {
+  'Exact Match':          'badge-exact',
+  'DUPLICATE':            'badge-dup',
+  'Standard Duplicate':   'badge-dup',
+  'BETTER QUALITY':       'badge-better',
+  'Higher Quality Match': 'badge-better',
+  'No Match':             'badge-nomatch',
+};
+
+// Actionable = needs a decision (not auto-moved, not no-match)
+function isActionable(r) {
+  const cat = r['Category'] || '';
+  return cat === 'DUPLICATE' || cat === 'Standard Duplicate' ||
+         cat === 'BETTER QUALITY' || cat === 'Higher Quality Match';
+}
+
+function rowKey(r) {
+  return (r['Unsorted Path'] || '') + '||' + (r['Match Path'] || '');
+}
+
+function fpTier(method) {
+  if (!(method || '').toLowerCase().includes('fingerprint')) return null;
+  const m = method.match(/(\d+)%/);
+  if (!m) return null;
+  const pct = parseInt(m[1]);
+  if (pct >= 95) return 'high';
+  if (pct >= 90) return 'medium';
+  return 'low';
+}
+
+// ═══════════════════════════════════════════════════════
+//  CSV PARSER
+// ═══════════════════════════════════════════════════════
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/);
+  const headers = splitLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = splitLine(lines[i]);
+    const row = {};
+    headers.forEach((h, j) => { row[h.trim()] = (vals[j] || '').trim(); });
+    rows.push(row);
+  }
+  return rows;
+}
+function splitLine(line) {
+  const out = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════
+//  FILTERING
+// ═══════════════════════════════════════════════════════
+function getFiltered() {
+  const search  = document.getElementById('search').value.toLowerCase();
+  const catF    = document.getElementById('filter-category').value;
+  const methodF = document.getElementById('filter-method').value;
+  const actionF = document.getElementById('filter-action').value;
+
+  return allRows.filter(r => {
+    if (catF    && r['Category']     !== catF)    return false;
+    if (methodF && r['Match Method'] !== methodF) return false;
+    if (actionF && r['Action']       !== actionF) return false;
+    // FP tier filter
+    if (activeTiers.size > 0) {
+      const tier = fpTier(r['Match Method']);
+      if (!tier || !activeTiers.has(tier)) return false;
+    }
+    if (search) {
+      const hay = [
+        r['Unsorted Path'], r['Match Path'],
+        r['Unsorted Title'], r['Unsorted Artist'], r['Unsorted Album'],
+        r['Match Title'],   r['Match Artist'],    r['Match Album'],
+      ].join(' ').toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════════════════
+const COLS = [
+  { key: 'Category',     label: 'Category',    sort: true },
+  { key: 'Match Method', label: 'Method',       sort: true },
+  { key: '_unsorted',    label: 'Unsorted File', sort: false },
+  { key: '_library',     label: 'Library Match', sort: false },
+  { key: '_diff',        label: 'Diff',          sort: false },
+  { key: '_decision',    label: 'Decision',      sort: false },
+];
+
+function fname(path) {
+  if (!path) return '';
+  return path.replace(/\\/g, '/').split('/').pop();
+}
+
+function fileCell(path, bitrate, size, duration, title, artist, album) {
+  if (!path) return '<span style="color:#374151">—</span>';
+  const name = fname(path);
+  const meta = [bitrate, size, duration].filter(Boolean).join(' · ');
+  const tags = [artist, title].filter(Boolean).join(' — ');
+  return `<div class="path-cell">
+    <div class="fname">${esc(name)}</div>
+    ${meta ? `<div style="color:#475569;margin-top:2px">${esc(meta)}</div>` : ''}
+    ${tags ? `<div class="tags-cell" style="margin-top:2px">${esc(tags)}</div>` : ''}
+    <div style="color:#1e2235;font-size:10px;margin-top:3px;font-family:monospace" title="${esc(path)}">${esc(path.length > 65 ? '…' + path.slice(-63) : path)}</div>
+  </div>`;
+}
+
+function methodCell(method) {
+  if (!method) return '<span style="color:#374151">—</span>';
+  const tier = fpTier(method);
+  if (tier === 'high')   return `<span class="badge badge-fp-high">${esc(method)}</span>`;
+  if (tier === 'medium') return `<span class="badge badge-fp-med">${esc(method)}</span>`;
+  if (tier === 'low')    return `<span class="badge badge-fp-low">${esc(method)}</span>`;
+  return `<span class="badge badge-method">${esc(method)}</span>`;
+}
+
+function diffCell(r) {
+  const parts = [];
+  const why = r['Why Not Exact'];
+  if (why) parts.push(`<div style="font-size:11px;color:#64748b">${esc(why)}</div>`);
+  const bDiff = r['Bitrate Diff (bps)'];
+  const sDiff = r['Size Diff (bytes)'];
+  if (bDiff && bDiff !== '0') parts.push(`<div style="font-size:11px;color:#94a3b8">BR diff: ${esc(bDiff)} bps</div>`);
+  if (sDiff && sDiff !== '0') parts.push(`<div style="font-size:11px;color:#94a3b8">Size diff: ${esc(sDiff)} B</div>`);
+  return parts.join('') || '<span style="color:#374151">—</span>';
+}
+
+function decisionCell(r) {
+  if (!isActionable(r)) return '<span style="color:#374151;font-size:11px">—</span>';
+  const key = rowKey(r);
+  const dec = decisions[key];
+  return `<div class="dec-cell">
+    <button class="dec-btn dec-keep-u${dec?.choice==='unsorted'?' active':''}"
+      onclick="decide('${esc(key)}','unsorted')">Keep unsorted</button>
+    <button class="dec-btn dec-keep-l${dec?.choice==='library'?' active':''}"
+      onclick="decide('${esc(key)}','library')">Keep library</button>
+    <button class="dec-btn dec-skip${dec?.choice==='skip'?' active':''}"
+      onclick="decide('${esc(key)}','skip')">Skip</button>
+    ${dec ? `<span class="decided-mark">✓ ${dec.choice}</span>` : ''}
+  </div>`;
+}
+
+function buildHeader() {
+  const tr = document.createElement('tr');
+  COLS.forEach(col => {
+    const th = document.createElement('th');
+    if (!col.sort) { th.classList.add('nosort'); th.textContent = col.label; }
+    else {
+      const sorted = sortCol === col.key;
+      if (sorted) th.classList.add('sorted');
+      th.innerHTML = `${col.label}<span class="sort-icon">${sorted ? (sortAsc ? '▲' : '▼') : '⇅'}</span>`;
+      th.onclick = () => {
+        if (sortCol === col.key) sortAsc = !sortAsc;
+        else { sortCol = col.key; sortAsc = true; }
+        render();
+      };
+    }
+    tr.appendChild(th);
+  });
+  const thead = document.getElementById('thead');
+  thead.innerHTML = '';
+  thead.appendChild(tr);
+}
+
+function render() {
+  buildHeader();
+  let rows = getFiltered();
+  if (sortCol) {
+    rows = [...rows].sort((a, b) => {
+      let av = a[sortCol] || '', bv = b[sortCol] || '';
+      const an = parseFloat(av.replace(/[^0-9.-]/g, ''));
+      const bn = parseFloat(bv.replace(/[^0-9.-]/g, ''));
+      if (!isNaN(an) && !isNaN(bn)) return sortAsc ? an - bn : bn - an;
+      return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+  }
+
+  const tbody  = document.getElementById('tbody');
+  const noRes  = document.getElementById('no-results');
+  const rc     = document.getElementById('row-count');
+  rc.textContent = `Showing ${rows.length.toLocaleString()} of ${allRows.length.toLocaleString()} rows`;
+  initColResize(document.querySelector('.table-wrap table'), [100,100,220,220,100,120]);
+
+  if (!rows.length) { tbody.innerHTML = ''; noRes.style.display = 'block'; return; }
+  noRes.style.display = 'none';
+
+  tbody.innerHTML = rows.map(r => {
+    const key     = rowKey(r);
+    const decided = !!decisions[key];
+    const cat     = r['Category'] || '';
+    const badge   = `<span class="badge ${CAT_BADGE[cat]||'badge-nomatch'}">${esc(cat)}</span>`;
+
+    return `<tr${decided ? ' class="decided"' : ''}>
+      <td>${badge}</td>
+      <td>${methodCell(r['Match Method'])}</td>
+      <td>${fileCell(r['Unsorted Path'], r['Unsorted Bitrate'], r['Unsorted Size'], r['Unsorted Duration'], r['Unsorted Title'], r['Unsorted Artist'], r['Unsorted Album'])}</td>
+      <td>${fileCell(r['Match Path'], r['Match Bitrate'], r['Match Size'], r['Match Duration'], r['Match Title'], r['Match Artist'], r['Match Album'])}</td>
+      <td>${diffCell(r)}</td>
+      <td>${decisionCell(r)}</td>
+    </tr>`;
+  }).join('');
+
+  updateDecPanel();
+}
+
+// ═══════════════════════════════════════════════════════
+//  STATS + FILTERS
+// ═══════════════════════════════════════════════════════
+function buildStats() {
+  const counts = {};
+  allRows.forEach(r => { counts[r['Category']] = (counts[r['Category']] || 0) + 1; });
+  const container = document.getElementById('stats');
+  container.innerHTML = '';
+
+  const makeActive = pill => {
+    document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+  };
+
+  const allPill = document.createElement('div');
+  allPill.className = 'stat-pill active';
+  allPill.innerHTML = `<span style="font-size:11px;color:#94a3b8">ALL</span><span class="count">${allRows.length.toLocaleString()}</span>`;
+  allPill.onclick = () => { document.getElementById('filter-category').value = ''; makeActive(allPill); render(); };
+  container.appendChild(allPill);
+
+  Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([cat, count]) => {
+    const pill = document.createElement('div');
+    pill.className = 'stat-pill';
+    const color = CAT_COLORS[cat] || '#9ca3af';
+    pill.innerHTML = `<span class="dot" style="background:${color}"></span><span style="color:#94a3b8;font-size:11px">${esc(cat)}</span><span class="count">${count.toLocaleString()}</span>`;
+    pill.onclick = () => { document.getElementById('filter-category').value = cat; makeActive(pill); render(); };
+    container.appendChild(pill);
+  });
+}
+
+function buildTierPills() {
+  // Count FP rows by tier
+  const tierCounts = { high: 0, medium: 0, low: 0 };
+  allRows.forEach(r => {
+    const t = fpTier(r['Match Method']);
+    if (t) tierCounts[t]++;
+  });
+
+  const hasFP = tierCounts.high + tierCounts.medium + tierCounts.low > 0;
+  const container = document.getElementById('tier-pills');
+  container.style.display = hasFP ? 'flex' : 'none';
+  if (!hasFP) return;
+
+  // Clear existing pills (keep label)
+  while (container.children.length > 1) container.removeChild(container.lastChild);
+
+  const defs = [
+    { key: 'high',   label: `High ≥95% (${tierCounts.high})`,     cls: 'tier-high'   },
+    { key: 'medium', label: `Medium 90–94% (${tierCounts.medium})`,cls: 'tier-medium' },
+    { key: 'low',    label: `Low 85–89% (${tierCounts.low})`,      cls: 'tier-low'    },
+  ];
+  defs.forEach(({ key, label, cls }) => {
+    if (!tierCounts[key]) return;
+    const p = document.createElement('div');
+    p.className = `tier-pill ${cls}`;
+    p.textContent = label;
+    p.onclick = () => {
+      if (activeTiers.has(key)) { activeTiers.delete(key); p.classList.add('inactive'); }
+      else { activeTiers.add(key); p.classList.remove('inactive'); }
+      render();
+    };
+    container.appendChild(p);
+  });
+}
+
+function buildFilters() {
+  const uniq = key => [...new Set(allRows.map(r => r[key]).filter(Boolean))].sort();
+  const fill = (id, vals) => {
+    const sel = document.getElementById(id);
+    const first = sel.options[0].text;
+    sel.innerHTML = `<option value="">${first}</option>` + vals.map(v => `<option value="${v}">${v}</option>`).join('');
+    sel.onchange = () => {
+      document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
+      render();
+    };
+  };
+  fill('filter-category', uniq('Category'));
+  fill('filter-method',   uniq('Match Method'));
+  fill('filter-action',   uniq('Action'));
+  document.getElementById('search').oninput = render;
+}
+
+function clearFilters() {
+  document.getElementById('search').value = '';
+  ['filter-category','filter-method','filter-action'].forEach(id => document.getElementById(id).value = '');
+  document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
+  document.querySelector('.stat-pill').classList.add('active');
+  activeTiers.clear();
+  document.querySelectorAll('.tier-pill').forEach(p => p.classList.remove('inactive'));
+  render();
+}
+
+// ═══════════════════════════════════════════════════════
+//  DECISIONS
+// ═══════════════════════════════════════════════════════
+function decide(key, choice) {
+  decisions[key] = { choice };
+  render();
+  toast(`✓ ${choice}`);
+}
+
+function clearDecisions() {
+  decisions = {};
+  render();
+  toast('Decisions cleared');
+}
+
+function updateDecPanel() {
+  const actionable = allRows.filter(isActionable);
+  const decided    = actionable.filter(r => decisions[rowKey(r)]);
+  document.getElementById('dp-decided').textContent = decided.length;
+  document.getElementById('dp-pending').textContent = actionable.length - decided.length;
+  document.getElementById('dp-download').disabled   = decided.length === 0;
+  document.getElementById('dec-panel').classList.toggle('hidden', actionable.length === 0);
+}
+
+function downloadDecisions() {
+  // Output two CSVs:
+  // 1. confirm-compatible CSV — same columns as original, Action set for --confirm
+  // 2. skipped CSV — rows the user decided to skip
+
+  // Get all original column headers from the first row
+  const allKeys = allRows.length ? Object.keys(allRows[0]) : [];
+
+  // Build confirm-compatible CSV (all rows with decisions filled in)
+  const confirmLines = [allKeys.map(k => `"${k}"`).join(',')];
+  const skippedLines = [allKeys.map(k => `"${k}"`).join(',')];
+
+  allRows.forEach(r => {
+    const key = rowKey(r);
+    const dec = decisions[key];
+    const cat = r['Category'] || '';
+
+    // Clone row, modify Action for selected rows
+    const out = Object.assign({}, r);
+
+    if (isActionable(r) && dec) {
+      if (dec.choice === 'library') {
+        // Move unsorted to duplicates/better quality (the --confirm-compatible action)
+        if (cat === 'DUPLICATE' || cat === 'Standard Duplicate') {
+          out['Action'] = 'Would move to DUPLICATE';
+        } else {
+          out['Action'] = 'Would move to BETTER QUALITY';
+        }
+        confirmLines.push(allKeys.map(k => `"${String(out[k]||'').replace(/"/g,'""')}"`).join(','));
+      } else if (dec.choice === 'skip') {
+        out['Action'] = 'Skipped in viewer';
+        skippedLines.push(allKeys.map(k => `"${String(out[k]||'').replace(/"/g,'""')}"`).join(','));
+      } else {
+        // 'unsorted' = keep the unsorted copy (non-standard action, note it)
+        out['Action'] = 'Keep unsorted — manual action required';
+        skippedLines.push(allKeys.map(k => `"${String(out[k]||'').replace(/"/g,'""')}"`).join(','));
+      }
+    } else {
+      // Non-actionable or undecided — pass through unchanged
+      confirmLines.push(allKeys.map(k => `"${String(out[k]||'').replace(/"/g,'""')}"`).join(','));
+    }
+  });
+
+  // Download the confirm-compatible CSV
+  const blob = new Blob([confirmLines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  // Preserve original filename with _reviewed suffix so --confirm accepts it
+  const origName = document.getElementById('header-file').textContent || 'music_report';
+  const reviewedName = origName.replace(/\.csv$/i, '') + '_reviewed.csv';
+  a.href = URL.createObjectURL(blob);
+  a.download = reviewedName;
+  a.click();
+
+  // Also download skipped CSV if there are any
+  if (skippedLines.length > 1) {
+    setTimeout(() => {
+      const blob2 = new Blob([skippedLines.join('\n')], { type: 'text/csv' });
+      const a2 = document.createElement('a');
+      a2.href = URL.createObjectURL(blob2);
+      a2.download = origName.replace(/\.csv$/i, '') + '_skipped.csv';
+      a2.click();
+    }, 500);
+  }
+
+  toast('Downloaded! Use the _reviewed.csv with --confirm.');
+}
+
+// ═══════════════════════════════════════════════════════
+//  LOAD + RESET
+// ═══════════════════════════════════════════════════════
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    let text = e.target.result;
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    allRows = parseCSV(text);
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('app').style.display       = 'flex';
+    document.getElementById('load-new').style.display  = 'inline';
+    document.getElementById('header-file').textContent = file.name;
+    buildFilters();
+    buildStats();
+    buildTierPills();
+    render();
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+function resetViewer() {
+  allRows = []; sortCol = null; sortAsc = true; decisions = {}; activeTiers.clear();
+  document.getElementById('drop-zone').style.display = 'block';
+  document.getElementById('app').style.display       = 'none';
+  document.getElementById('load-new').style.display  = 'none';
+  document.getElementById('header-file').textContent = '';
+  document.getElementById('file-input').value        = '';
+}
+
+// ═══════════════════════════════════════════════════════
+//  HELPERS + EVENTS
+// ═══════════════════════════════════════════════════════
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+document.getElementById('file-input').onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); };
+const dz = document.getElementById('drop-zone');
+dz.ondragover  = e => { e.preventDefault(); dz.classList.add('drag-over'); };
+dz.ondragleave = () => dz.classList.remove('drag-over');
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag-over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+let _fs=13;function changeFontSize(d){_fs=Math.max(9,Math.min(20,_fs+d));document.querySelectorAll('table, thead th, tbody td').forEach(function(el){el.style.fontSize=_fs+'px';});}
+
+// ── Column resize ────────────────────────────────────────────────────────────
+function initColResize(table, defaultWidths) {
+  if (!table) return;
+  // Create or reset colgroup
+  let cg = table.querySelector('colgroup');
+  if (cg) cg.remove();
+  cg = document.createElement('colgroup');
+  const ths = table.querySelectorAll('thead th');
+  const widths = defaultWidths || Array.from(ths).map(() => 150);
+  widths.forEach(w => {
+    const col = document.createElement('col');
+    col.style.width = w + 'px';
+    cg.appendChild(col);
+  });
+  table.insertBefore(cg, table.firstChild);
+  table.style.tableLayout = 'fixed';
+  table.style.width = widths.reduce((a,b)=>a+b,0) + 'px';
+  table.style.minWidth = table.style.width;
+
+  // Add resize handles
+  ths.forEach((th, i) => {
+    th.style.position = 'relative';
+    if (th.querySelector('.crh')) return;
+    const handle = document.createElement('span');
+    handle.className = 'crh';
+    handle.style.cssText = 'position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2;background:transparent;';
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation();
+      const startX = e.clientX;
+      const col = cg.children[i];
+      const startW = parseInt(col.style.width) || 150;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+      function onMove(me) {
+        const nw = Math.max(40, startW + me.clientX - startX);
+        col.style.width = nw + 'px';
+        const total = Array.from(cg.children).reduce((s,c)=>s+(parseInt(c.style.width)||0),0);
+        table.style.width = total + 'px';
+        table.style.minWidth = total + 'px';
+      }
+      function onUp() {
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    handle.addEventListener('mouseenter', function(){this.style.background='#6366f155';});
+    handle.addEventListener('mouseleave', function(){this.style.background='transparent';});
+    handle.addEventListener('click', function(e){e.stopPropagation();});
+    th.appendChild(handle);
+  });
+}
+
+</script>
+</html>

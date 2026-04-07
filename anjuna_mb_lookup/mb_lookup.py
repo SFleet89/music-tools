@@ -1,5 +1,5 @@
 """
-MusicBrainz Batch Lookup  v2.0
+MusicBrainz Batch Lookup  v2.1
 ================================
 Generic music collection lookup — works with any folder of album subfolders.
 
@@ -32,6 +32,10 @@ Usage:
 
 Output:
     Reports saved to: <script folder>\\reports\\mb_lookup_YYYYMMDD_HHMMSS.csv
+
+Changes in v2.1:
+    - Fixed candidate serialization bug: empty catnos now written as "-" to avoid
+      false || split that corrupted candidate count in viewer
 
 Changes in v2.0:
     - Added AcoustID fingerprint lookup as Strategy 0 (highest priority)
@@ -68,7 +72,7 @@ SUPPORTED_EXTENSIONS   = {".mp3", ".flac", ".aac", ".m4a"}
 MB_API_BASE            = "https://musicbrainz.org/ws/2"
 ACOUSTID_API           = "https://api.acoustid.org/v2/lookup"
 ACOUSTID_KEY           = "LA0hhbEjxv"
-FPCALC_DEFAULT         = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\fpcalc.exe"
+FPCALC_DEFAULT         = str(Path(__file__).parent.parent / "fpcalc.exe")  # tools/fpcalc.exe
 USER_AGENT             = "MBLookup/2.0 ( music-tools )"
 REQUEST_DELAY          = 1.1   # MusicBrainz rate limit
 ACOUSTID_DELAY         = 0.4   # AcoustID rate limit
@@ -647,8 +651,9 @@ def run_lookup(batch_path, auto_mode, fpcalc_path):
         candidate_parts = []
         for c in candidates_detail:
             r = c["release"]
+            catnos = get_mb_catnos(r) or "-"   # avoid empty field creating false || split
             candidate_parts.append("%s|%s|%s|search:%d meta:%d combined:%d" % (
-                r.get("id", ""), release_label(r), get_mb_catnos(r),
+                r.get("id", ""), release_label(r), catnos,
                 c["search_score"], c["meta_score"], c["combined"],
             ))
         candidates_str = "||".join(candidate_parts)
@@ -834,7 +839,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  MusicBrainz Batch Lookup  v2.0")
+    print("  MusicBrainz Batch Lookup  v2.1")
     print("=" * 60)
     print("  Folder        : %s" % batch_path)
     print("  Mode          : %s" % mode_label)

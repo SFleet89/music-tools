@@ -4,6 +4,18 @@ All notable changes to Library Duplicate Finder are documented here.
 
 ---
 
+## library_dupes_viewer.html
+
+### v1.1 — 2026-04-05
+
+#### Fixed
+- Font size buttons (A−/A+) now correctly resize all table text.
+
+#### Changed
+- App fills the full window height.
+
+---
+
 ## [1.2] - 2026-03-14
 
 ### Added

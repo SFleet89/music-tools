@@ -4,6 +4,45 @@ All notable changes to the Music Filename Scanner are documented here.
 
 ---
 
+## scan_compare_viewer.html
+
+### v1.1 — 2026-04-05
+
+#### Fixed
+- Font size buttons (A−/A+) now correctly resize all table text.
+
+#### Changed
+- Table fills the full window height.
+
+#### Added
+- Column resize handles — drag the right edge of any column header.
+
+---
+
+## scan_report_viewer.html
+
+### v1.1 — 2026-04-05
+
+#### Fixed
+- Font size buttons (A−/A+) now correctly resize all table text.
+
+#### Changed
+- Table fills the full window height.
+
+#### Added
+- Column resize handles — drag the right edge of any column header.
+
+---
+
+## scan_progress_viewer.html
+
+### v1.1 — 2026-04-05
+
+#### Fixed
+- Font size buttons (A−/A+) now correctly resize all table text.
+
+---
+
 ## [2.2] - 2026-03-14
 
 ### Added

@@ -4,6 +4,21 @@ All notable changes to Clean Album Folders are documented here.
 
 ---
 
+## clean_album_folders_viewer.html
+
+### v1.1 — 2026-04-05
+
+#### Fixed
+- Font size buttons (A−/A+) now correctly resize all table text. Previously the change targeted the container div but was overridden by hardcoded CSS on table and cell elements.
+
+#### Changed
+- Table fills the full window height instead of being capped at `max-height: calc(100vh - 420px)`.
+
+#### Added
+- Column resize handles — drag the right edge of any column header to adjust its width.
+
+---
+
 ## [1.0] - 2026-03-22
 
 ### Added

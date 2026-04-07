@@ -31,9 +31,10 @@ from collections import Counter
 SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
+SCRIPT_DIR      = Path(__file__).parent
 DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
-SKIP_LIST_FILE  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\filename_scanner\scan_skip_list.txt"
+REPORTS_FOLDER  = SCRIPT_DIR / "reports"
+SKIP_LIST_FILE  = SCRIPT_DIR / "scan_skip_list.txt"
 
 # ── Parse flags ────────────────────────────────────────────────────────────────
 SUMMARY_ONLY = "--summary" in sys.argv

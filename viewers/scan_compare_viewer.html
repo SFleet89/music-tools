@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan Comparison Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e2e8f0; display: flex; flex-direction: column; }
+
+  header { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 17px; font-weight: 600; color: #fff; }
+  header span { font-size: 13px; color: #64748b; }
+  .header-btn { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 7px; color: #94a3b8; cursor: pointer; font-size: 12px; padding: 6px 12px; margin-left: auto; transition: all 0.15s; }
+  .header-btn:hover { border-color: #6366f1; color: #e2e8f0; }
+
+  /* Drop zones */
+  #load-screen { padding: 40px 24px; }
+  .drop-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 900px; margin: 0 auto 24px; }
+  .drop-zone {
+    border: 2px dashed #2d3148; border-radius: 12px; padding: 40px 24px;
+    text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s;
+  }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: #6366f1; background: #1a1d2e; }
+  .drop-zone.loaded { border-color: #059669; background: #0d1f14; }
+  .drop-zone svg { margin-bottom: 12px; opacity: 0.4; }
+  .drop-zone.loaded svg { opacity: 0.7; }
+  .drop-zone p { color: #94a3b8; font-size: 13px; line-height: 1.7; }
+  .drop-zone strong { color: #e2e8f0; }
+  .drop-zone .loaded-name { color: #34d399; font-size: 12px; font-family: monospace; margin-top: 6px; }
+  .drop-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+  .label-old { color: #f59e0b; }
+  .label-new { color: #34d399; }
+
+  .compare-btn {
+    display: block; margin: 0 auto; padding: 12px 32px;
+    background: #6366f1; border: none; border-radius: 8px;
+    color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .compare-btn:hover { background: #4f46e5; }
+  .compare-btn:disabled { opacity: 0.35; cursor: default; }
+
+  /* App */
+  #app { display: none; padding: 20px 24px 40px;  flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+
+  /* Stats bar */
+  .stats { display: flex; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; padding: 10px 16px; font-size: 13px; }
+  .stat strong { font-size: 20px; display: block; }
+  .stat span { color: #64748b; }
+  .stat.fixed strong { color: #34d399; }
+  .stat.new-issues strong { color: #f87171; }
+  .stat.remaining strong { color: #fbbf24; }
+  .stat.neutral strong { color: #e2e8f0; }
+
+  /* Filter tabs */
+  .filter-tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .ftab {
+    padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid transparent; transition: all 0.15s; user-select: none;
+  }
+  .ftab:hover { opacity: 0.85; }
+  .ftab-all      { background: #374151; border-color: #374151; color: #e2e8f0; }
+  .ftab-fixed    { background: #05966922; border-color: #059669; color: #34d399; }
+  .ftab-new      { background: #dc262622; border-color: #dc2626; color: #f87171; }
+  .ftab-remain   { background: #d9770622; border-color: #d97706; color: #fbbf24; }
+  .ftab.inactive { background: #1a1d2e !important; border-color: #2d3148 !important; color: #64748b !important; }
+
+  /* Controls */
+  .controls { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  input[type=text], select { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; color: #e2e8f0; padding: 8px 12px; font-size: 13px; outline: none; }
+  input[type=text] { width: 260px; }
+  input[type=text]:focus, select:focus { border-color: #6366f1; }
+  .reset-btn { font-size: 12px; color: #6366f1; background: none; border: none; cursor: pointer; padding: 0; margin-left: auto; }
+  .reset-btn:hover { text-decoration: underline; }
+
+  #result-count { font-size: 13px; color: #64748b; margin-bottom: 10px; }
+
+  /* Table */
+  .table-wrap { flex: 1; min-height: 0; overflow-x: auto; border-radius: 10px; border: 1px solid #2d3148; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #1a1d2e; color: #94a3b8; font-weight: 500; padding: 10px 14px; text-align: left; white-space: nowrap; cursor: pointer; user-select: none; }
+  th:hover { color: #e2e8f0; }
+  th.nosort { cursor: default; }
+  th.nosort:hover { color: #94a3b8; }
+  td { padding: 9px 14px; border-top: 1px solid #1e2235; vertical-align: middle; max-width: 320px; word-break: break-word; }
+  tr:hover td { background: #1a1d2e55; }
+
+  .fn-cell  { font-family: "Consolas","Monaco",monospace; font-size: 12px; color: #e2e8f0; }
+  .fol-cell { color: #64748b; font-size: 12px; }
+
+  /* Status badges */
+  .status-badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 10px; white-space: nowrap; }
+  .status-fixed  { background: #05966922; border: 1px solid #059669; color: #34d399; }
+  .status-new    { background: #dc262622; border: 1px solid #dc2626; color: #f87171; }
+  .status-remain { background: #d9770622; border: 1px solid #d97706; color: #fbbf24; }
+
+  /* Issue tags */
+  .issue-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 12px; white-space: nowrap; font-weight: 500; }
+  .tag-underscores   { background: #7c3aed22; border: 1px solid #7c3aed; color: #a78bfa; }
+  .tag-brackets      { background: #db277722; border: 1px solid #db2777; color: #f472b6; }
+  .tag-double_spaces { background: #d9770622; border: 1px solid #d97706; color: #fbbf24; }
+  .tag-junk          { background: #b4530422; border: 1px solid #b45309; color: #f59e0b; }
+  .tag-dots          { background: #05966922; border: 1px solid #059669; color: #34d399; }
+  .tag-dash_spacing  { background: #0891b222; border: 1px solid #0891b2; color: #22d3ee; }
+  .tag-all_caps      { background: #dc262622; border: 1px solid #dc2626; color: #f87171; }
+  .tag-lowercase     { background: #7c3aed22; border: 1px solid #6d28d9; color: #c4b5fd; }
+  .tag-mixed         { background: #1d4ed822; border: 1px solid #1d4ed8; color: #60a5fa; }
+
+  .no-results { text-align: center; padding: 60px 20px; color: #64748b; font-size: 14px; }
+
+  #toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(10px); background: #1a1d2e; border: 1px solid #6366f1; color: #e2e8f0; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 100; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .font-ctrl { display:flex; gap:2px; margin-left:4px; }
+  .font-btn { background:#1a1d2e; border:1px solid #2d3148; border-radius:6px; color:#94a3b8; padding:4px 10px; font-size:12px; cursor:pointer; transition:all .15s; line-height:1.4; }
+  .font-btn:hover { border-color:#6366f1; color:#e2e8f0; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2">
+    <path d="M18 20V10M12 20V4M6 20v-6"/>
+  </svg>
+  <h1>Scan Comparison Viewer</h1>
+  <span id="header-dates"></span>
+  <button id="load-new" class="header-btn" style="display:none" onclick="resetViewer()">⟳ Load new scans</button>
+  <button id="export-btn" style="display:none;background:none;border:1px solid #2d3148;border-radius:8px;color:#6366f1;cursor:pointer;font-size:13px;padding:6px 14px;margin-left:8px" onclick="exportCSV()">⬇ Export CSV</button>
+  <div class="font-ctrl"><button class="font-btn" onclick="changeFontSize(-1)" title="Decrease font size">A−</button><button class="font-btn" onclick="changeFontSize(1)" title="Increase font size">A+</button></div>
+</header>
+
+<!-- Load screen -->
+<div id="load-screen">
+  <div class="drop-row">
+    <div>
+      <div class="drop-label label-old">Older scan (baseline)</div>
+      <div class="drop-zone" id="dz-old" onclick="document.getElementById('fi-old').click()">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <p><strong>Drop older scan CSV</strong><br>or click to browse<br><br>
+        <small>scan_summary_*.csv or per-issue report</small></p>
+        <div class="loaded-name" id="old-name" style="display:none"></div>
+      </div>
+      <input type="file" id="fi-old" accept=".csv" style="display:none">
+    </div>
+    <div>
+      <div class="drop-label label-new">Newer scan (current)</div>
+      <div class="drop-zone" id="dz-new" onclick="document.getElementById('fi-new').click()">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="1.5">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <p><strong>Drop newer scan CSV</strong><br>or click to browse<br><br>
+        <small>scan_summary_*.csv or per-issue report</small></p>
+        <div class="loaded-name" id="new-name" style="display:none"></div>
+      </div>
+      <input type="file" id="fi-new" accept=".csv" style="display:none">
+    </div>
+  </div>
+  <button class="compare-btn" id="compare-btn" onclick="compare()" disabled>Compare scans</button>
+</div>
+
+<!-- Results -->
+<div id="app">
+  <div class="stats" id="stats"></div>
+
+  <div class="filter-tabs">
+    <div class="ftab ftab-all"    onclick="setFilter('all',    this)">All</div>
+    <div class="ftab ftab-fixed"  onclick="setFilter('fixed',  this)">Fixed</div>
+    <div class="ftab ftab-new"    onclick="setFilter('new',    this)">New issues</div>
+    <div class="ftab ftab-remain" onclick="setFilter('remain', this)">Still flagged</div>
+  </div>
+
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search filename or folder…">
+    <select id="sort-col">
+      <option value="status">Sort by status</option>
+      <option value="filename">Sort by filename</option>
+      <option value="folder">Sort by folder</option>
+    </select>
+    <select id="sort-dir">
+      <option value="asc">Ascending</option>
+      <option value="desc">Descending</option>
+    </select>
+    <button class="reset-btn" onclick="resetFilters()">Reset filters</button>
+  </div>
+
+  <div id="result-count"></div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="nosort">Status</th>
+          <th onclick="sortBy('filename')">Filename</th>
+          <th onclick="sortBy('folder')">Folder</th>
+          <th class="nosort">Issues</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="no-results" id="no-results" style="display:none">No files match the current filters.</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── State ──
+let oldRows = null, newRows = null;
+let results = [];   // [{status, filename, folder, oldIssues, newIssues, fullPath}]
+let activeFilter = 'all';
+let searchTerm   = '';
+let sortCol      = 'status';
+let sortDir      = 'asc';
+
+// ── CSV parser ──
+function parseCSV(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const lines = text.split(/\r?\n/);
+  const headers = splitLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = splitLine(lines[i]);
+    const row = {};
+    headers.forEach((h, j) => row[h.trim()] = (vals[j] || '').trim());
+    rows.push(row);
+  }
+  return rows;
+}
+function splitLine(line) {
+  const result = []; let cur = '', inQ = false;
+  for (const c of line) {
+    if (c === '"') { inQ = !inQ; }
+    else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+    else cur += c;
+  }
+  result.push(cur);
+  return result;
+}
+
+// ── File loading ──
+function readFile(file, slot) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const rows = parseCSV(e.target.result);
+    if (slot === 'old') {
+      oldRows = rows;
+      document.getElementById('old-name').textContent = file.name;
+      document.getElementById('old-name').style.display = 'block';
+      document.getElementById('dz-old').classList.add('loaded');
+    } else {
+      newRows = rows;
+      document.getElementById('new-name').textContent = file.name;
+      document.getElementById('new-name').style.display = 'block';
+      document.getElementById('dz-new').classList.add('loaded');
+    }
+    document.getElementById('compare-btn').disabled = !(oldRows && newRows);
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+// ── Compare ──
+function compare() {
+  if (!oldRows || !newRows) return;
+
+  // Index by Full Path (primary) or Filename+Folder (fallback)
+  function rowKey(r) {
+    return (r['Full Path'] || (r['Folder'] + '/' + r['Filename'])).toLowerCase();
+  }
+
+  const oldMap = {};
+  oldRows.forEach(r => { oldMap[rowKey(r)] = r; });
+  const newMap = {};
+  newRows.forEach(r => { newMap[rowKey(r)] = r; });
+
+  const allKeys = new Set([...Object.keys(oldMap), ...Object.keys(newMap)]);
+  results = [];
+
+  for (const key of allKeys) {
+    const o = oldMap[key];
+    const n = newMap[key];
+    let status, filename, folder, oldIssues, newIssues, fullPath;
+
+    if (o && !n) {
+      status = 'fixed'; filename = o['Filename']; folder = o['Folder'];
+      oldIssues = o['Issues'] || ''; newIssues = ''; fullPath = o['Full Path'] || '';
+    } else if (!o && n) {
+      status = 'new'; filename = n['Filename']; folder = n['Folder'];
+      oldIssues = ''; newIssues = n['Issues'] || ''; fullPath = n['Full Path'] || '';
+    } else {
+      // In both — still flagged
+      status = 'remain'; filename = n['Filename']; folder = n['Folder'];
+      oldIssues = o['Issues'] || ''; newIssues = n['Issues'] || ''; fullPath = n['Full Path'] || '';
+    }
+    results.push({ status, filename: filename||'', folder: folder||'', oldIssues, newIssues, fullPath });
+  }
+
+  // Show app
+  document.getElementById('load-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+    setTimeout(function(){ initColResize(document.querySelector('.table-wrap table'), [80,260,220,200]); }, 0);
+  document.getElementById('load-new').style.display = 'inline';
+
+  // Header dates
+  const oldName = document.getElementById('old-name').textContent;
+  const newName = document.getElementById('new-name').textContent;
+  document.getElementById('header-dates').textContent = `${oldName}  →  ${newName}`;
+
+  buildStats();
+  render();
+}
+
+// ── Stats ──
+function buildStats() {
+  const fixed  = results.filter(r => r.status === 'fixed').length;
+  const nw     = results.filter(r => r.status === 'new').length;
+  const remain = results.filter(r => r.status === 'remain').length;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat fixed"><strong>${fixed.toLocaleString()}</strong><span>Fixed ✓</span></div>
+    <div class="stat new-issues"><strong>${nw.toLocaleString()}</strong><span>New issues</span></div>
+    <div class="stat remaining"><strong>${remain.toLocaleString()}</strong><span>Still flagged</span></div>
+    <div class="stat neutral"><strong>${results.length.toLocaleString()}</strong><span>Total files changed</span></div>
+  `;
+}
+
+// ── Filter ──
+function setFilter(f, el) {
+  activeFilter = f;
+  document.querySelectorAll('.ftab').forEach(t => t.classList.add('inactive'));
+  el.classList.remove('inactive');
+  render();
+}
+
+// ── Render ──
+function getFiltered() {
+  let rows = results;
+  if (activeFilter !== 'all')
+    rows = rows.filter(r => r.status === activeFilter || (activeFilter === 'remain' && r.status === 'remain'));
+  if (searchTerm) {
+    const q = searchTerm.toLowerCase();
+    rows = rows.filter(r =>
+      r.filename.toLowerCase().includes(q) ||
+      r.folder.toLowerCase().includes(q)
+    );
+  }
+  return rows.slice().sort((a, b) => {
+    const ORDER = { fixed: 0, new: 1, remain: 2 };
+    let va, vb;
+    if (sortCol === 'status')   { va = ORDER[a.status]||0; vb = ORDER[b.status]||0; }
+    else if (sortCol === 'filename') { va = a.filename.toLowerCase(); vb = b.filename.toLowerCase(); }
+    else { va = a.folder.toLowerCase(); vb = b.folder.toLowerCase(); }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ?  1 : -1;
+    return 0;
+  });
+}
+
+const ISSUE_MAP = [
+  { match: 'underscores instead of spaces',              cls: 'tag-underscores'   },
+  { match: 'brackets/parentheses with underscores',      cls: 'tag-brackets'      },
+  { match: 'double spaces',                              cls: 'tag-double_spaces' },
+  { match: 'leading or trailing junk',                   cls: 'tag-junk'          },
+  { match: 'dots used as separators',                    cls: 'tag-dots'          },
+  { match: 'inconsistent spacing around dashes',         cls: 'tag-dash_spacing'  },
+  { match: 'all caps or mostly uppercase',               cls: 'tag-all_caps'      },
+  { match: 'starts with lowercase',                      cls: 'tag-lowercase'     },
+  { match: 'mixed separators',                           cls: 'tag-mixed'         },
+];
+
+function tagClass(issue) {
+  const l = issue.toLowerCase();
+  const im = ISSUE_MAP.find(x => l.includes(x.match));
+  return im ? im.cls : '';
+}
+
+function renderIssues(issueStr) {
+  if (!issueStr) return '<span style="color:#374151;font-size:11px">none</span>';
+  return issueStr.split('|').map(s => s.trim()).filter(Boolean)
+    .map(i => `<span class="tag ${tagClass(i)}">${esc(i)}</span>`).join(' ');
+}
+
+function render() {
+  const rows  = getFiltered();
+  const tbody = document.getElementById('tbody');
+  const noRes = document.getElementById('no-results');
+  document.getElementById('result-count').textContent =
+    `Showing ${rows.length.toLocaleString()} of ${results.length.toLocaleString()} files`;
+
+  if (!rows.length) { tbody.innerHTML = ''; noRes.style.display = 'block'; return; }
+  noRes.style.display = 'none';
+
+  tbody.innerHTML = rows.map(r => {
+    const badge = r.status === 'fixed'  ? '<span class="status-badge status-fixed">Fixed</span>'
+                : r.status === 'new'    ? '<span class="status-badge status-new">New issue</span>'
+                :                         '<span class="status-badge status-remain">Still flagged</span>';
+
+    const issuesHtml = r.status === 'fixed'
+      ? `<div class="issue-tags">${renderIssues(r.oldIssues)}</div>`
+      : r.status === 'new'
+      ? `<div class="issue-tags">${renderIssues(r.newIssues)}</div>`
+      : `<div style="font-size:11px;color:#64748b;margin-bottom:4px">Before:</div>
+         <div class="issue-tags">${renderIssues(r.oldIssues)}</div>
+         <div style="font-size:11px;color:#64748b;margin:4px 0 2px">After:</div>
+         <div class="issue-tags">${renderIssues(r.newIssues)}</div>`;
+
+    return `<tr>
+      <td>${badge}</td>
+      <td class="fn-cell">${esc(r.filename)}</td>
+      <td class="fol-cell">${esc(r.folder)}</td>
+      <td>${issuesHtml}</td>
+    </tr>`;
+  }).join('');
+}
+
+function sortBy(col) {
+  sortDir = (sortCol === col && sortDir === 'asc') ? 'desc' : 'asc';
+  sortCol = col;
+  document.getElementById('sort-col').value = col;
+  render();
+}
+
+function resetFilters() {
+  activeFilter = 'all';
+  document.querySelectorAll('.ftab').forEach(t => t.classList.remove('inactive'));
+  document.getElementById('search').value = '';
+  searchTerm = ''; sortCol = 'status'; sortDir = 'asc';
+  document.getElementById('sort-col').value = 'status';
+  document.getElementById('sort-dir').value = 'asc';
+  render();
+}
+
+function resetViewer() {
+  oldRows = null; newRows = null; results = [];
+  activeFilter = 'all'; searchTerm = ''; sortCol = 'status'; sortDir = 'asc';
+  document.getElementById('load-screen').style.display = 'block';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('load-new').style.display = 'none';
+  document.getElementById('export-btn').style.display = 'none';
+  document.getElementById('header-dates').textContent = '';
+  document.getElementById('compare-btn').disabled = true;
+  ['old','new'].forEach(slot => {
+    document.getElementById(`dz-${slot}`).classList.remove('loaded');
+    document.getElementById(`${slot}-name`).style.display = 'none';
+    document.getElementById(`fi-${slot}`).value = '';
+  });
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ── Events ──
+['old','new'].forEach(slot => {
+  const fi = document.getElementById(`fi-${slot}`);
+  const dz = document.getElementById(`dz-${slot}`);
+  fi.addEventListener('change', e => { if (e.target.files[0]) readFile(e.target.files[0], slot); });
+  dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0], slot);
+  });
+});
+document.getElementById('search').addEventListener('input', e => { searchTerm = e.target.value; render(); });
+document.getElementById('sort-col').addEventListener('change', e => { sortCol = e.target.value; render(); });
+document.getElementById('sort-dir').addEventListener('change', e => { sortDir = e.target.value; render(); });
+
+function exportCSV() {
+  if (!results.length) return;
+  const headers = ['status', 'folder', 'filename', 'full_path', 'old_issues', 'new_issues'];
+  const esc = v => {
+    v = String(v ?? '');
+    if (v.includes(',') || v.includes('"') || v.includes('\n') || v.includes('\r')) {
+      return '"' + v.replace(/"/g, '""') + '"';
+    }
+    return v;
+  };
+  const lines = [
+    headers.map(esc).join(','),
+    ...results.map(r => [
+      r.status || '',
+      r.folder || '',
+      r.filename || '',
+      r.fullPath || '',
+      (r.oldIssues || []).join('; '),
+      (r.newIssues || []).join('; '),
+    ].map(esc).join(','))
+  ];
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const ts = new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
+  a.download = 'scan_comparison_export_' + ts + '.csv';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+let _fs=13;function changeFontSize(d){_fs=Math.max(9,Math.min(20,_fs+d));document.querySelectorAll('table, thead th, tbody td').forEach(function(el){el.style.fontSize=_fs+'px';});}
+
+// ── Column resize ────────────────────────────────────────────────────────────
+function initColResize(table, defaultWidths) {
+  if (!table) return;
+  // Create or reset colgroup
+  let cg = table.querySelector('colgroup');
+  if (cg) cg.remove();
+  cg = document.createElement('colgroup');
+  const ths = table.querySelectorAll('thead th');
+  const widths = defaultWidths || Array.from(ths).map(() => 150);
+  widths.forEach(w => {
+    const col = document.createElement('col');
+    col.style.width = w + 'px';
+    cg.appendChild(col);
+  });
+  table.insertBefore(cg, table.firstChild);
+  table.style.tableLayout = 'fixed';
+  table.style.width = widths.reduce((a,b)=>a+b,0) + 'px';
+  table.style.minWidth = table.style.width;
+
+  // Add resize handles
+  ths.forEach((th, i) => {
+    th.style.position = 'relative';
+    if (th.querySelector('.crh')) return;
+    const handle = document.createElement('span');
+    handle.className = 'crh';
+    handle.style.cssText = 'position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2;background:transparent;';
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation();
+      const startX = e.clientX;
+      const col = cg.children[i];
+      const startW = parseInt(col.style.width) || 150;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+      function onMove(me) {
+        const nw = Math.max(40, startW + me.clientX - startX);
+        col.style.width = nw + 'px';
+        const total = Array.from(cg.children).reduce((s,c)=>s+(parseInt(c.style.width)||0),0);
+        table.style.width = total + 'px';
+        table.style.minWidth = total + 'px';
+      }
+      function onUp() {
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    handle.addEventListener('mouseenter', function(){this.style.background='#6366f155';});
+    handle.addEventListener('mouseleave', function(){this.style.background='transparent';});
+    handle.addEventListener('click', function(e){e.stopPropagation();});
+    th.appendChild(handle);
+  });
+}
+
+</script>
+</body>
+</html>

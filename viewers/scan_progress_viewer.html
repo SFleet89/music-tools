@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan Progress Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+  header { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 17px; font-weight: 600; color: #fff; }
+  header span { font-size: 13px; color: #64748b; margin-left: 4px; }
+  .hbtn { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 7px; color: #94a3b8; cursor: pointer; font-size: 12px; padding: 6px 12px; margin-left: auto; transition: all 0.15s; }
+  .hbtn:hover { border-color: #6366f1; color: #e2e8f0; }
+  .font-ctrl { display:flex; gap:2px; margin-left:4px; }
+  .font-btn { background:#1a1d2e; border:1px solid #2d3148; border-radius:6px; color:#94a3b8; padding:4px 10px; font-size:12px; cursor:pointer; transition:all .15s; line-height:1.4; }
+  .font-btn:hover { border-color:#6366f1; color:#e2e8f0; }
+
+  #drop-zone { margin: 40px auto; border: 2px dashed #2d3148; border-radius: 16px; padding: 100px 60px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+  #drop-zone:hover, #drop-zone.drag-over { border-color: #6366f1; background: #1a1d2e; }
+  #drop-zone svg { margin-bottom: 16px; opacity: 0.4; }
+  #drop-zone p { color: #94a3b8; font-size: 14px; line-height: 1.7; }
+  #drop-zone strong { color: #e2e8f0; }
+  #file-input { display: none; }
+
+  #app { display: none; padding: 20px 24px 40px; }
+
+  /* ── Summary cards ── */
+  .summary-cards { display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap; }
+  .card { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 10px; padding: 14px 20px; min-width: 140px; }
+  .card-label { font-size: 11px; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .card-value { font-size: 26px; font-weight: 700; }
+  .card-sub   { font-size: 11px; color: #64748b; margin-top: 3px; }
+  .card-green  .card-value { color: #34d399; }
+  .card-red    .card-value { color: #f87171; }
+  .card-amber  .card-value { color: #fbbf24; }
+  .card-blue   .card-value { color: #60a5fa; }
+  .card-purple .card-value { color: #a78bfa; }
+
+  /* ── Chart ── */
+  .chart-section { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 10px; padding: 20px; margin-bottom: 24px; }
+  .chart-title { font-size: 13px; font-weight: 600; color: #94a3b8; margin-bottom: 16px; }
+  .chart-wrap { position: relative; height: 220px; }
+  canvas { width: 100% !important; }
+
+  .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── Issue breakdown table ── */
+  .section-title { font-size: 13px; font-weight: 600; color: #94a3b8; margin-bottom: 12px; }
+  .table-wrap { border-radius: 10px; border: 1px solid #2d3148; overflow: hidden; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: #1a1d2e; color: #64748b; font-weight: 500; padding: 10px 14px; text-align: left; border-bottom: 1px solid #2d3148; white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid #181c28; }
+  tbody tr:hover { background: #1a1d2e55; }
+  tbody td { padding: 9px 14px; vertical-align: middle; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .chg-pos { color: #f87171; }
+  .chg-neg { color: #34d399; }
+  .chg-zero{ color: #374151; }
+
+  /* ── Scan history table ── */
+  .scan-row-fixed   { color: #34d399; }
+  .scan-row-new     { color: #f87171; }
+  .scan-row-net-pos { color: #f87171; }
+  .scan-row-net-neg { color: #34d399; }
+  .scan-row-net-zero{ color: #374151; }
+
+  /* ── Bar charts for issue breakdown ── */
+  .bar-cell { display: flex; align-items: center; gap: 8px; }
+  .bar { height: 6px; border-radius: 3px; background: #6366f1; flex-shrink: 0; transition: width 0.3s; }
+  .bar-val { font-size: 11px; color: #94a3b8; min-width: 30px; }
+
+  .no-data { text-align: center; padding: 40px; color: #374151; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2">
+    <path d="M18 20V10M12 20V4M6 20v-6"/>
+  </svg>
+  <h1>Scan Progress Viewer</h1>
+  <span id="header-file"></span>
+  <button id="load-new" class="hbtn" style="display:none" onclick="resetViewer()">⟳ Load new report</button>
+  <button id="export-btn" style="display:none;background:none;border:1px solid #2d3148;border-radius:8px;color:#6366f1;cursor:pointer;font-size:13px;padding:6px 14px;margin-left:8px" onclick="exportCSV()">⬇ Export CSV</button>
+  <div class="font-ctrl"><button class="font-btn" onclick="changeFontSize(-1)" title="Decrease font size">A−</button><button class="font-btn" onclick="changeFontSize(1)" title="Increase font size">A+</button></div>
+</header>
+
+<div id="drop-zone" onclick="document.getElementById('file-input').click()">
+  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+    <polyline points="14 2 14 8 20 8"/>
+    <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+  </svg>
+  <p><strong>Drop a scan_progress_*.csv here</strong><br>or click to browse<br><br>
+  Generate one with: <code>python scan_progress.py</code></p>
+</div>
+<input type="file" id="file-input" accept=".csv">
+
+<div id="app">
+  <div class="summary-cards" id="summary-cards"></div>
+
+  <div class="chart-section">
+    <div class="chart-title">Flagged files over time</div>
+    <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
+    <div class="chart-legend" id="chart-legend"></div>
+  </div>
+
+  <div class="section-title">Issue breakdown — first vs latest scan</div>
+  <div class="table-wrap" id="issue-table-wrap">
+    <table id="issue-table">
+      <thead>
+        <tr>
+          <th>Issue type</th>
+          <th class="num">First scan</th>
+          <th class="num">Latest scan</th>
+          <th class="num">Change</th>
+          <th style="width:200px">Progress</th>
+        </tr>
+      </thead>
+      <tbody id="issue-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Scan history</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Scan date</th>
+          <th class="num">Total flagged</th>
+          <th class="num">Fixed</th>
+          <th class="num">New issues</th>
+          <th class="num">Net change</th>
+        </tr>
+      </thead>
+      <tbody id="history-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ── CSV parser ──
+let allRows = [], csvFilename = '', csvHeaders = [];
+
+function parseCSV(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const lines = text.split(/\r?\n/);
+  const headers = splitLine(lines[0]).map(h=>h.trim());
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = splitLine(lines[i]);
+    const row = {};
+    headers.forEach((h, j) => row[h.trim()] = (vals[j]||'').trim());
+    rows.push(row);
+  }
+  return { headers, rows };
+}
+function splitLine(line) {
+  const out = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c==='"') { if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ; }
+    else if (c===','&&!inQ) { out.push(cur); cur=''; }
+    else cur+=c;
+  }
+  out.push(cur);
+  return out;
+}
+
+const ISSUE_COLS = [
+  "Underscores","Bracket underscores","Double spaces","Junk characters",
+  "Dots","Dash spacing","All caps","Lowercase","Mixed separators"
+];
+const ISSUE_COLORS = [
+  '#a78bfa','#f472b6','#fbbf24','#f59e0b',
+  '#34d399','#22d3ee','#f87171','#c4b5fd','#60a5fa'
+];
+
+let chartInstance = null;
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const parsed = parseCSV(e.target.result);
+    if (!parsed.rows.length) { alert('No data found in this file.'); return; }
+    allRows = parsed.rows;
+    csvHeaders = parsed.headers;
+    csvFilename = file.name;
+    document.getElementById('header-file').textContent = file.name;
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('app').style.display       = 'block';
+    document.getElementById('load-new').style.display  = 'inline';
+    document.getElementById('export-btn').style.display = 'inline';
+    buildAll(allRows);
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+function buildAll(rows) {
+  buildSummaryCards(rows);
+  buildChart(rows);
+  buildIssueTable(rows);
+  buildHistoryTable(rows);
+}
+
+// ── Summary cards ──
+function buildSummaryCards(rows) {
+  const first = rows[0];
+  const last  = rows[rows.length - 1];
+  const firstTotal = parseInt(first['Total Flagged'])||0;
+  const lastTotal  = parseInt(last['Total Flagged'])||0;
+  const diff       = lastTotal - firstTotal;
+  const pct        = firstTotal ? Math.round(diff/firstTotal*100) : 0;
+  const sign       = diff > 0 ? '+' : '';
+
+  // Sum up all fixed across all scans (excluding first)
+  let totalFixed = 0, totalNew = 0;
+  rows.slice(1).forEach(r => {
+    const f = parseInt(r['Fixed Since Previous'])||0;
+    const n = parseInt(r['New Issues Since Previous'])||0;
+    totalFixed += f;
+    totalNew   += n;
+  });
+
+  document.getElementById('summary-cards').innerHTML = `
+    <div class="card card-purple">
+      <div class="card-label">Scans analysed</div>
+      <div class="card-value">${rows.length}</div>
+      <div class="card-sub">${first['Scan Date']} → ${last['Scan Date']}</div>
+    </div>
+    <div class="card card-blue">
+      <div class="card-label">First scan</div>
+      <div class="card-value">${firstTotal.toLocaleString()}</div>
+      <div class="card-sub">flagged files</div>
+    </div>
+    <div class="card ${lastTotal < firstTotal ? 'card-green' : lastTotal > firstTotal ? 'card-red' : 'card-blue'}">
+      <div class="card-label">Latest scan</div>
+      <div class="card-value">${lastTotal.toLocaleString()}</div>
+      <div class="card-sub">${sign}${diff.toLocaleString()} (${sign}${pct}%)</div>
+    </div>
+    <div class="card card-green">
+      <div class="card-label">Total fixed</div>
+      <div class="card-value">${totalFixed.toLocaleString()}</div>
+      <div class="card-sub">across all scans</div>
+    </div>
+    <div class="card card-red">
+      <div class="card-label">Total new issues</div>
+      <div class="card-value">${totalNew.toLocaleString()}</div>
+      <div class="card-sub">across all scans</div>
+    </div>
+  `;
+}
+
+// ── Trend chart (vanilla canvas — no dependencies) ──
+function buildChart(rows) {
+  const canvas = document.getElementById('trend-chart');
+  const ctx    = canvas.getContext('2d');
+  const wrap   = canvas.parentElement;
+
+  // Set pixel size
+  const W = wrap.offsetWidth || 800;
+  const H = 220;
+  canvas.width  = W * window.devicePixelRatio;
+  canvas.height = H * window.devicePixelRatio;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+  const PAD = { top: 20, right: 20, bottom: 40, left: 55 };
+  const cW   = W - PAD.left - PAD.right;
+  const cH   = H - PAD.top  - PAD.bottom;
+
+  const labels = rows.map(r => r['Scan Date']);
+  const totals = rows.map(r => parseInt(r['Total Flagged'])||0);
+  const maxVal = Math.max(...totals, 1);
+  const minVal = 0;
+
+  // Grid lines
+  ctx.strokeStyle = '#2d3148';
+  ctx.lineWidth   = 1;
+  const gridLines = 4;
+  for (let i = 0; i <= gridLines; i++) {
+    const y = PAD.top + cH - (i / gridLines) * cH;
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, y);
+    ctx.lineTo(PAD.left + cW, y);
+    ctx.stroke();
+    const val = Math.round(minVal + (i / gridLines) * (maxVal - minVal));
+    ctx.fillStyle = '#475569';
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(val.toLocaleString(), PAD.left - 8, y + 4);
+  }
+
+  // X axis labels
+  ctx.fillStyle   = '#475569';
+  ctx.font        = '11px -apple-system, sans-serif';
+  ctx.textAlign   = 'center';
+  const step = rows.length > 1 ? cW / (rows.length - 1) : cW;
+  labels.forEach((label, i) => {
+    const x = PAD.left + (rows.length > 1 ? i * step : cW / 2);
+    // Only show every nth label if crowded
+    const every = Math.ceil(rows.length / 8);
+    if (i % every === 0 || i === rows.length - 1) {
+      ctx.fillText(label.substring(0, 10), x, H - PAD.bottom + 16);
+    }
+  });
+
+  // Line + fill
+  const points = totals.map((v, i) => ({
+    x: PAD.left + (rows.length > 1 ? i * step : cW / 2),
+    y: PAD.top  + cH - ((v - minVal) / (maxVal - minVal)) * cH,
+  }));
+
+  // Fill under line
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, PAD.top + cH);
+  points.forEach(p => ctx.lineTo(p.x, p.y));
+  ctx.lineTo(points[points.length-1].x, PAD.top + cH);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + cH);
+  grad.addColorStop(0,   'rgba(99,102,241,0.3)');
+  grad.addColorStop(1,   'rgba(99,102,241,0.02)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.strokeStyle = '#6366f1';
+  ctx.lineWidth   = 2.5;
+  ctx.lineJoin    = 'round';
+  points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+  ctx.stroke();
+
+  // Dots
+  points.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle   = '#6366f1';
+    ctx.fill();
+    ctx.strokeStyle = '#0f1117';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+  });
+
+  // Tooltip-style value on hover handled via overlay div would need JS —
+  // for now just label first and last
+  if (points.length >= 2) {
+    ctx.fillStyle = '#a5b4fc';
+    ctx.font      = 'bold 12px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    // First
+    ctx.fillText(totals[0].toLocaleString(), points[0].x, points[0].y - 10);
+    // Last
+    ctx.fillText(totals[totals.length-1].toLocaleString(),
+      points[points.length-1].x, points[points.length-1].y - 10);
+  }
+}
+
+// ── Issue breakdown table ──
+function buildIssueTable(rows) {
+  const first = rows[0];
+  const last  = rows[rows.length - 1];
+  const maxFirst = Math.max(...ISSUE_COLS.map(c => parseInt(first[c])||0), 1);
+
+  const tbody = document.getElementById('issue-tbody');
+  if (rows.length < 2) {
+    tbody.innerHTML = `<tr><td colspan="5" class="no-data">Need at least 2 scans to show a comparison.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = ISSUE_COLS.map((col, ci) => {
+    const fVal = parseInt(first[col])||0;
+    const lVal = parseInt(last[col])||0;
+    if (fVal === 0 && lVal === 0) return '';
+    const chg  = lVal - fVal;
+    const sign = chg > 0 ? '+' : '';
+    const chgClass = chg > 0 ? 'chg-pos' : chg < 0 ? 'chg-neg' : 'chg-zero';
+    const barW = Math.round((fVal / maxFirst) * 180);
+    const barColor = ISSUE_COLORS[ci % ISSUE_COLORS.length];
+    return `<tr>
+      <td>${esc(col)}</td>
+      <td class="num">${fVal.toLocaleString()}</td>
+      <td class="num">${lVal.toLocaleString()}</td>
+      <td class="num ${chgClass}">${sign}${chg.toLocaleString()}</td>
+      <td>
+        <div class="bar-cell">
+          <div class="bar" style="width:${barW}px;background:${barColor}"></div>
+          <span class="bar-val">${fVal > 0 ? Math.round((1 - lVal/fVal)*100) + '% fixed' : ''}</span>
+        </div>
+      </td>
+    </tr>`;
+  }).filter(Boolean).join('');
+}
+
+// ── History table ──
+function buildHistoryTable(rows) {
+  const tbody = document.getElementById('history-tbody');
+  tbody.innerHTML = rows.map((r, i) => {
+    const total  = parseInt(r['Total Flagged'])||0;
+    const fixed  = r['Fixed Since Previous'];
+    const newIss = r['New Issues Since Previous'];
+    const net    = r['Net Change'];
+
+    const fixedHtml = fixed === '—' || fixed === '' ? '<span style="color:#374151">—</span>'
+      : `<span class="scan-row-fixed">-${parseInt(fixed).toLocaleString()}</span>`;
+    const newHtml = newIss === '—' || newIss === '' ? '<span style="color:#374151">—</span>'
+      : `<span class="scan-row-new">+${parseInt(newIss).toLocaleString()}</span>`;
+    const netNum = parseInt(net);
+    const netHtml = isNaN(netNum) ? '<span style="color:#374151">—</span>'
+      : netNum === 0 ? '<span class="scan-row-net-zero">0</span>'
+      : netNum < 0   ? `<span class="scan-row-net-neg">${netNum.toLocaleString()}</span>`
+      :                `<span class="scan-row-net-pos">+${netNum.toLocaleString()}</span>`;
+
+    return `<tr>
+      <td>${esc(r['Scan Date']||'')}</td>
+      <td class="num">${total.toLocaleString()}</td>
+      <td class="num">${fixedHtml}</td>
+      <td class="num">${newHtml}</td>
+      <td class="num">${netHtml}</td>
+    </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function resetViewer() {
+  document.getElementById('drop-zone').style.display = 'block';
+  document.getElementById('app').style.display       = 'none';
+  document.getElementById('load-new').style.display  = 'none';
+  document.getElementById('export-btn').style.display = 'none';
+  document.getElementById('header-file').textContent = '';
+  allRows = []; csvFilename = ''; csvHeaders = [];
+  document.getElementById('file-input').value        = '';
+}
+
+// ── Events ──
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+function exportCSV() {
+  if (!allRows.length) return;
+  const headers = csvHeaders.length ? csvHeaders : Object.keys(allRows[0]);
+  const esc = v => {
+    v = String(v ?? '');
+    if (v.includes(',') || v.includes('"') || v.includes('\n') || v.includes('\r')) {
+      return '"' + v.replace(/"/g, '""') + '"';
+    }
+    return v;
+  };
+  const lines = [
+    headers.map(esc).join(','),
+    ...allRows.map(r => headers.map(h => esc(r[h] ?? '')).join(','))
+  ];
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const ts = new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
+  a.download = 'exported_' + (csvFilename.replace('.csv','') || 'scan_progress') + '_' + ts + '.csv';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+let _fs=13;function changeFontSize(d){_fs=Math.max(9,Math.min(20,_fs+d));document.querySelectorAll('table, thead th, tbody td').forEach(function(el){el.style.fontSize=_fs+'px';});}
+</script>
+</body>
+</html>

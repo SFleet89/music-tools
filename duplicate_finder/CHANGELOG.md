@@ -2,6 +2,36 @@
 
 ---
 
+## music_report_viewer.html
+
+### v1.1 — 2026-04-05
+
+#### Fixed
+- Font size buttons (A−/A+) now correctly resize all table text.
+
+#### Changed
+- Table fills the full window height.
+
+#### Added
+- Column resize handles — drag the right edge of any column header.
+
+---
+
+## undo_report_viewer.html
+
+### v1.1 — 2026-04-05
+
+#### Fixed
+- Font size buttons (A−/A+) now correctly resize all table text.
+
+#### Changed
+- Table fills the full window height.
+
+#### Added
+- Column resize handles — drag the right edge of any column header.
+
+---
+
 ## build_fp_cache.py
 
 ### v2.0 — 2026-04-02

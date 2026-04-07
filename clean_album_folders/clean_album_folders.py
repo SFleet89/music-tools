@@ -32,9 +32,10 @@ from datetime import datetime
 from collections import Counter
 
 # ── Config ─────────────────────────────────────────────────────────────────────
+SCRIPT_DIR      = Path(__file__).parent
 DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
 HOLDING_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\clean_album_folders\holding"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
+REPORTS_FOLDER  = SCRIPT_DIR / "reports"
 
 # Music file extensions — always kept
 MUSIC_EXT = {
@@ -191,7 +192,7 @@ def write_report(to_move: list, to_keep: list, reports_dir: Path, dry_run: bool)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    reports_dir = Path(REPORTS_FOLDER)
+    reports_dir = SCRIPT_DIR / "reports"
     holding_dir = Path(HOLDING_FOLDER)
 
     # ── Determine folder ───────────────────────────────────────────────────────

@@ -626,7 +626,7 @@ def main():
 
     mode_label  = "auto-pick" if auto_mode else "manual review"
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    reports_dir = SCRIPT_DIR / "reports"
+    reports_dir = SCRIPT_DIR.parent / "reports"  # writes to parent folder's reports/ (e.g. tools/reports/)
     reports_dir.mkdir(exist_ok=True)
     output_path = reports_dir / ("mb_lookup_%s.csv" % timestamp)
 

@@ -29,6 +29,13 @@
 
 ## mb_lookup.py
 
+### v2.1 — 2026-04-05
+
+#### Fixed
+- Candidate serialization bug: empty catalogue numbers are now written as `-` instead of blank. Previously, a release with no catno produced `mbid|label||scores` which collided with the `||` candidate separator, causing affected candidates to appear broken or split in the viewer. Affected releases like Suburban Train and Adagio for Strings.
+
+---
+
 ### v2.0 — 2026-03-29
 
 #### Changed
