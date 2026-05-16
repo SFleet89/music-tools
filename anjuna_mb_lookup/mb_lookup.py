@@ -1,5 +1,5 @@
 """
-MusicBrainz Batch Lookup  v2.1
+MusicBrainz Batch Lookup  v2.7
 ================================
 Generic music collection lookup — works with any folder of album subfolders.
 
@@ -78,6 +78,8 @@ REQUEST_DELAY          = 1.1   # MusicBrainz rate limit
 ACOUSTID_DELAY         = 0.4   # AcoustID rate limit
 RESULT_LIMIT           = 10
 FUZZY_THRESHOLD        = 70
+CLEAR_WINNER_GAP       = 10   # min score gap between 1st and 2nd candidate to auto-pick
+CLEAR_WINNER_MIN       = 75   # min combined score for the top candidate to qualify
 FINGERPRINT_SAMPLE     = 3     # max files to fingerprint per folder
 MIN_SINGLE_MATCH_SCORE = 35    # single-result matches below this → review
 SCRIPT_DIR             = Path(__file__).parent
@@ -99,8 +101,49 @@ NO_FINGERPRINT = "--no-fingerprint" in _flags
 
 # ── Folder name parsing ────────────────────────────────────────────────────────
 _BRACKET_RE = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
+_CATNO_RE   = re.compile(r'\[([^\]]+)\]')   # square brackets only — for catno extraction
 _YEAR_RE    = re.compile(r'\b(19|20)\d{2}\b')
 _FORMAT_RE  = re.compile(r'\b(WEB|CD|FLAC|MP3|LOSSLESS|320|V0|VINYL|SACD)\b', re.IGNORECASE)
+
+# ── Catalogue number prefix expansion ─────────────────────────────────────────
+# Maps label abbreviations/names used in folder names to their full label name.
+# Some labels store catnos on MusicBrainz WITHOUT a label prefix (e.g. Magik Muzik
+# uses bare numbers like "835-6"), so we also try stripping the prefix entirely.
+# Add entries here as you discover new patterns in your collection.
+CATNO_PREFIX_MAP = {
+    # Abbreviation / folder prefix  →  full label name (as stored on MB)
+    "MM":                            "Magik Muzik",
+    "Magik Muzik":                   "Magik Muzik",
+    "BH":                            "Black Hole Recordings",
+    "Black Hole":                    "Black Hole Recordings",
+    "BHDO":                          "Black Hole Recordings Download Only",
+    "DP":                            "Dance Planet Ltd.",
+    "NEB":                           "Nebula",
+    "K":                             "Kontor Records",
+    "D4L":                           "Dance 4 Life",
+}
+
+def catno_search_variants(catno):
+    """
+    Return a list of catno strings to try in order.
+    Always tries the raw catno first, then — if it starts with a known label
+    prefix — also tries the full label name variant, then the bare number.
+    Full label name is tried before bare number because the bare number is less
+    specific and risks matching unrelated releases on MB.
+    Example: "MM 835-6"  →  ["MM 835-6", "Magik Muzik 835-6", "835-6"]
+    """
+    variants = [catno]
+    upper = catno.upper()
+    for prefix, full_name in CATNO_PREFIX_MAP.items():
+        if upper.startswith(prefix.upper() + " "):
+            number_part = catno[len(prefix):].strip()
+            full_variant = "%s %s" % (full_name, number_part)
+            if full_variant not in variants:
+                variants.append(full_variant)
+            if number_part and number_part not in variants:
+                variants.append(number_part)
+            break
+    return variants
 
 
 def parse_folder_name(name):
@@ -114,10 +157,14 @@ def parse_folder_name(name):
     if year_m:
         result["year"] = year_m.group(0)
 
+    # Skip literal 'no cat' placeholders (normalised to NOCAT* after stripping punctuation)
     catnos = []
-    for m in _BRACKET_RE.finditer(name):
-        val = (m.group(1) or m.group(2) or "").strip()
-        if not _YEAR_RE.fullmatch(val) and not _FORMAT_RE.fullmatch(val):
+    for m in _CATNO_RE.finditer(name):
+        val = m.group(1).strip()
+        val_norm = re.sub(r'[\s\.\-_#]', '', val).upper()
+        if (not _YEAR_RE.fullmatch(val)
+                and not _FORMAT_RE.fullmatch(val)
+                and not val_norm.startswith("NOCAT")):
             catnos.append(val)
     if catnos:
         result["catno"] = catnos[0]
@@ -517,14 +564,15 @@ def lookup_folder(folder, folder_meta, auto_mode, fpcalc_path):
             network_error = str(e)
             print("          ! AcoustID error: %s" % e)
 
-    # Strategy 1: catno
+    # Strategy 1: catno (tries raw catno, then prefix-stripped and expanded variants)
     if parsed["catno"]:
-        try:
-            releases = mb_search_catno(parsed["catno"])
-            if releases:
-                return releases, "catno: %s" % parsed["catno"], acoustid_mbids
-        except Exception as e:
-            network_error = str(e)
+        for catno_variant in catno_search_variants(parsed["catno"]):
+            try:
+                releases = mb_search_catno(catno_variant)
+                if releases:
+                    return releases, "catno: %s" % catno_variant, acoustid_mbids
+            except Exception as e:
+                network_error = str(e)
 
     # Strategy 2: artist + title
     if parsed["artist"] and parsed["title"]:
@@ -679,12 +727,29 @@ def run_lookup(batch_path, auto_mode, fpcalc_path):
                 len(releases), search_method, best["combined"], best["meta_details"])
             print("          ✓ AUTO  %s  [combined:%d]  [MBID: %s]" % (
                 release_label(best_r), best["combined"], best_id))
+        elif (len(candidates_detail) >= 2
+              and best["combined"] >= CLEAR_WINNER_MIN
+              and best["combined"] - candidates_detail[1]["combined"] >= CLEAR_WINNER_GAP):
+            gap    = best["combined"] - candidates_detail[1]["combined"]
+            status = "matched"
+            notes  = "Clear winner from %d candidates via %s (gap: +%d) — %s" % (
+                len(releases), search_method, gap, best["meta_details"])
+            print("          ✓ CLEAR  %s  [combined:%d  gap:+%d]  [MBID: %s]" % (
+                release_label(best_r), best["combined"], gap, best_id))
         else:
             status  = "review"
             best_id = ""
             notes   = "%d candidates via %s — needs manual review" % (len(releases), search_method)
             print("          ? REVIEW  %d candidates (best combined: %d)" % (
                 len(releases), best["combined"]))
+
+        # Safety check: title match 0% despite having title tags means the release
+        # is almost certainly wrong — demote to review regardless of other scores.
+        if status == "matched" and best["track_match"] == 0 and folder_meta["titles"]:
+            status  = "review"
+            best_id = ""
+            notes   += " — demoted: title match 0%"
+            print("          ⚠ DEMOTED to review (title match 0%)")
 
         rows.append(_make_row(
             folder, parsed, status,
@@ -726,6 +791,74 @@ def _make_row(folder, parsed, status, release, mbid, candidates_detail, folder_m
         "candidates":      candidates_str,
         "notes":           notes,
     }
+
+
+# ── Folder mover ───────────────────────────────────────────────────────────────
+
+def move_flagged_folders(rows, apply_mode):
+    """
+    Move review/not_found/no_catno folders into subfolders next to their
+    current location:
+      status=review              → <parent>/To Review/<folder>
+      status=not_found|no_catno → <parent>/No Match/<folder>
+    Dry run by default; pass apply_mode=True to execute moves.
+    """
+    import shutil as _shutil
+
+    DEST_MAP = {
+        "review":    "To Review",
+        "not_found": "No Match",
+        "no_catno":  "No Match",
+    }
+
+    moves = []
+    for row in rows:
+        dest_name = DEST_MAP.get(row.get("status", ""))
+        if not dest_name:
+            continue
+        src = Path(row["folder_path"])
+        if not src.exists():
+            continue
+        dest_dir = src.parent / dest_name
+        moves.append((src, dest_dir / src.name, dest_dir, dest_name))
+
+    print()
+    print("=" * 60)
+    print("  FOLDER MOVE  (%s)" % ("APPLY" if apply_mode else "DRY RUN"))
+    print("=" * 60)
+
+    if not moves:
+        print("  No folders to move.")
+        print("=" * 60)
+        return
+
+    for src, dst, dest_dir, label in moves:
+        print("  [%-10s]  %s" % (label, src.name))
+
+    if not apply_mode:
+        print()
+        print("  %d folder(s) would be moved. Add --apply to execute." % len(moves))
+        print("=" * 60)
+        return
+
+    moved = errors = 0
+    seen_dirs = set()
+    for src, dst, dest_dir, label in moves:
+        if dest_dir not in seen_dirs:
+            dest_dir.mkdir(exist_ok=True)
+            seen_dirs.add(dest_dir)
+        try:
+            _shutil.move(str(src), str(dst))
+            moved += 1
+        except Exception as e:
+            print("  ! Error moving %s: %s" % (src.name, e))
+            errors += 1
+
+    print()
+    print("  Moved : %d" % moved)
+    if errors:
+        print("  Errors: %d" % errors)
+    print("=" * 60)
 
 
 # ── CSV output ─────────────────────────────────────────────────────────────────
@@ -839,7 +972,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  MusicBrainz Batch Lookup  v2.1")
+    print("  MusicBrainz Batch Lookup  v2.7")
     print("=" * 60)
     print("  Folder        : %s" % batch_path)
     print("  Mode          : %s" % mode_label)
@@ -853,6 +986,8 @@ def main():
     if rows:
         write_csv(rows, str(output_path))
         print_summary(rows, auto_mode, str(output_path))
+        if "--move" in _flags:
+            move_flagged_folders(rows, apply_mode="--apply" in _flags)
     else:
         print("  No results to save.")
 

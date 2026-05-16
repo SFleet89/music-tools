@@ -1,5 +1,5 @@
 """
-Anjunabeats MusicBrainz Batch Lookup  v1.3
+Anjunabeats MusicBrainz Batch Lookup  v1.5
 ===========================================
 Scans a batch folder of Anjunabeats releases, extracts the catalogue
 number from each subfolder name, and looks it up on MusicBrainz.
@@ -14,10 +14,30 @@ Usage:
     python anjuna_mb_lookup.py "C:\\path\\to\\ANJ001-ANJ100-FLAC"
     python anjuna_mb_lookup.py "C:\\path\\to\\ANJ001-ANJ100-FLAC" --auto
     python anjuna_mb_lookup.py "C:\\path\\to\\ANJ001-ANJ100-FLAC" --review
+    python anjuna_mb_lookup.py "C:\\path\\to\\ANJ001-ANJ100-FLAC" --move
+    python anjuna_mb_lookup.py "C:\\path\\to\\ANJ001-ANJ100-FLAC" --move --apply
 
 Output:
     Reports are saved next to the script in:
     <script folder>\\reports\\anjuna_lookup_YYYYMMDD_HHMMSS.csv
+
+Changes in v1.5:
+    - Merged v1.4a (RD variants + metadata fallback) with v1.4b (--move flag)
+    - Added RD/R2D/R3D variants for remix releases (MusicBrainz commonly
+      stores ANJ131R as ANJ131RD — digital release of a remix EP)
+    - Added metadata fallback search: when all catno variants fail, parse
+      artist + title from the folder name and search MB by those fields
+    - Fallback results are scored normally and marked as [meta fallback] in
+      the notes column
+    - Added --move flag: after lookup, moves review folders to To Review/
+      and not_found/no_catno folders to No Match/ next to the source folder
+    - Add --apply to execute moves (default is dry run preview)
+
+Changes in v1.4:
+    - Added move_flagged_folders(): --move prints which folders would move;
+      --move --apply executes the moves
+      review folders -> To Review/ subfolder next to source
+      not_found/no_catno folders -> No Match/ subfolder next to source
 
 Changes in v1.3:
     - Reports now save next to the script, not inside the batch folder
@@ -107,12 +127,15 @@ def generate_variants(catno):
         for s in DIGITAL_VARIANTS + REMIX_VARIANTS + OTHER_VARIANTS:
             variants.append(base + s)
     elif suffix.startswith('R'):
-        # Remix release — try bare base and other remix variants only
-        # Do NOT try D variants as these are different releases
+        # Remix release — try bare base, RD variants (MusicBrainz commonly
+        # stores ANJ131R as ANJ131RD), and other remix variants.
+        # Do NOT try plain D variants as those are different releases.
         variants.append(base)
+        variants.append(base + suffix + 'D')   # e.g. ANJ131R  -> ANJ131RD
         for s in REMIX_VARIANTS:
             if s != suffix:
                 variants.append(base + s)
+                variants.append(base + s + 'D')  # e.g. ANJ131R2 -> ANJ131R2D
     elif suffix == 'D' or suffix in DIGITAL_VARIANTS:
         # Digital release — try bare base and other digital variants
         variants.append(base)
@@ -221,6 +244,47 @@ def get_mb_track_titles(release_detail):
 
 def get_mb_track_count(release_detail):
     return sum(len(m.get("tracks", [])) for m in release_detail.get("media", []))
+
+
+# ── Folder name parsing for metadata fallback ─────────────────────────────────
+
+# Scene tags commonly appended after the title
+_SCENE_TAG_RE = re.compile(
+    r'\s*[-–]\s*(WEB|CD|VINYL|LOSSLESS|MP3|FLAC|320|256|GAF|MiNiMAL|'
+    r'PARAKHODEN|TT|UL\d+|LOSSLESS[-\w]*).*$',
+    re.IGNORECASE
+)
+
+def parse_folder_artist_title(folder_name):
+    """
+    Extract artist and title from folder name for metadata fallback search.
+    e.g. 'ANJ131R Oceanlab - Lonely Girl (Part 2)-WEB-2009-LOSSLESS-GAF'
+      -> ('Oceanlab', 'Lonely Girl (Part 2)')
+    """
+    # Remove catno prefix
+    s = re.sub(r'^ANJ[A-Z]*\d+[A-Z\d]*\s+', '', folder_name, flags=re.IGNORECASE).strip()
+    # Remove trailing scene tags
+    s = _SCENE_TAG_RE.sub('', s).strip()
+    if ' - ' in s:
+        artist, title = s.split(' - ', 1)
+        return artist.strip(), title.strip()
+    return '', s.strip()
+
+
+def mb_search_metadata(artist, title):
+    """Search MusicBrainz by release title and artist name."""
+    if not title:
+        return []
+    t = title.replace('"', '')
+    a = artist.replace('"', '')
+    query = ('release:"%s" AND artist:"%s"' % (t, a)) if a else ('release:"%s"' % t)
+    params = urllib.parse.urlencode({
+        "query": query,
+        "fmt":   "json",
+        "limit": str(RESULT_LIMIT),
+    })
+    data = mb_get("%s/release?%s" % (MB_API_BASE, params))
+    return data.get("releases", [])
 
 
 # ── Scoring ────────────────────────────────────────────────────────────────────
@@ -378,6 +442,7 @@ def run_lookup(batch_path, auto_mode):
         releases       = []
         searched_catno = catno
         network_error  = None
+        meta_fallback  = False
 
         for try_catno in catnos_to_try:
             try:
@@ -399,10 +464,24 @@ def run_lookup(batch_path, auto_mode):
             continue
 
         if not releases:
-            print("          ✗ Not found on MusicBrainz (tried %d variant(s))" % len(catnos_to_try))
+            # Metadata fallback — parse artist/title from folder name and search MB
+            fb_artist, fb_title = parse_folder_artist_title(folder_name)
+            meta_fallback = False
+            if fb_title:
+                print("          ~ Trying metadata fallback: %r — %r" % (fb_artist, fb_title))
+                try:
+                    releases = mb_search_metadata(fb_artist, fb_title)
+                except Exception as e:
+                    print("          ! Metadata fallback error: %s" % e)
+                if releases:
+                    meta_fallback = True
+                    print("          ~ Metadata fallback found %d result(s)" % len(releases))
+
+        if not releases:
+            print("          ✗ Not found on MusicBrainz (tried %d catno variant(s) + metadata fallback)" % len(catnos_to_try))
             rows.append(_make_row(folder_name, str(folder), catno, searched_catno,
                                   "not_found", {}, None, [], folder_meta,
-                                  "No results after trying %d catno variants" % len(catnos_to_try)))
+                                  "No results after trying %d catno variants + metadata fallback" % len(catnos_to_try)))
             continue
 
         # Score all candidates
@@ -447,19 +526,22 @@ def run_lookup(batch_path, auto_mode):
 
         if len(releases) == 1:
             status = "matched"
-            notes  = "Single result — %s" % best["meta_details"]
+            fallback_tag = " [meta fallback]" if meta_fallback else ""
+            notes  = "Single result — %s%s" % (best["meta_details"], fallback_tag)
             print("          ✓ %s  [catno:%d meta:%d]  [MBID: %s]" % (
                 release_label(best_r), best["catno_score"], best["meta_score"], best_mbid))
         elif auto_mode:
             status = "auto_matched"
-            notes  = "Auto-picked from %d candidates (combined %d) — %s" % (
-                len(releases), best["combined"], best["meta_details"])
+            fallback_tag = " [meta fallback]" if meta_fallback else ""
+            notes  = "Auto-picked from %d candidates (combined %d) — %s%s" % (
+                len(releases), best["combined"], best["meta_details"], fallback_tag)
             print("          ✓ AUTO  %s  [combined:%d]  [MBID: %s]" % (
                 release_label(best_r), best["combined"], best_mbid))
         else:
             status    = "review"
             best_mbid = ""
-            notes     = "%d candidates — needs manual review" % len(releases)
+            fallback_tag = " [meta fallback]" if meta_fallback else ""
+            notes     = "%d candidates — needs manual review%s" % (len(releases), fallback_tag)
             print("          ? REVIEW  %d candidates (best combined: %d)" % (
                 len(releases), best["combined"]))
 
@@ -499,6 +581,74 @@ def _make_row(folder_name, folder_path, catno, searched_catno, status,
         "candidates":      candidates_str,
         "notes":           notes,
     }
+
+
+# ── Folder mover ───────────────────────────────────────────────────────────────
+
+def move_flagged_folders(rows, apply_mode):
+    """
+    Move review/not_found/no_catno folders into subfolders next to their
+    current location:
+      status=review              → <parent>/To Review/<folder>
+      status=not_found|no_catno → <parent>/No Match/<folder>
+    Dry run by default; pass apply_mode=True to execute moves.
+    """
+    import shutil as _shutil
+
+    DEST_MAP = {
+        "review":    "To Review",
+        "not_found": "No Match",
+        "no_catno":  "No Match",
+    }
+
+    moves = []
+    for row in rows:
+        dest_name = DEST_MAP.get(row.get("status", ""))
+        if not dest_name:
+            continue
+        src = Path(row["folder_path"])
+        if not src.exists():
+            continue
+        dest_dir = src.parent / dest_name
+        moves.append((src, dest_dir / src.name, dest_dir, dest_name))
+
+    print()
+    print("=" * 60)
+    print("  FOLDER MOVE  (%s)" % ("APPLY" if apply_mode else "DRY RUN"))
+    print("=" * 60)
+
+    if not moves:
+        print("  No folders to move.")
+        print("=" * 60)
+        return
+
+    for src, dst, dest_dir, label in moves:
+        print("  [%-10s]  %s" % (label, src.name))
+
+    if not apply_mode:
+        print()
+        print("  %d folder(s) would be moved. Add --apply to execute." % len(moves))
+        print("=" * 60)
+        return
+
+    moved = errors = 0
+    seen_dirs = set()
+    for src, dst, dest_dir, label in moves:
+        if dest_dir not in seen_dirs:
+            dest_dir.mkdir(exist_ok=True)
+            seen_dirs.add(dest_dir)
+        try:
+            _shutil.move(str(src), str(dst))
+            moved += 1
+        except Exception as e:
+            print("  ! Error moving %s: %s" % (src.name, e))
+            errors += 1
+
+    print()
+    print("  Moved : %d" % moved)
+    if errors:
+        print("  Errors: %d" % errors)
+    print("=" * 60)
 
 
 # ── CSV output ─────────────────────────────────────────────────────────────────
@@ -647,7 +797,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  Anjunabeats MusicBrainz Batch Lookup  v1.3")
+    print("  Anjunabeats MusicBrainz Batch Lookup  v1.5")
     print("=" * 60)
     print("  Folders   : %d selected" % len(batch_folders))
     for f in batch_folders:
@@ -669,6 +819,8 @@ def main():
     if all_rows:
         write_csv(all_rows, str(output_path))
         print_summary(all_rows, auto_mode, str(output_path))
+        if "--move" in flags:
+            move_flagged_folders(all_rows, apply_mode="--apply" in flags)
     else:
         print("  No results to save.")
 

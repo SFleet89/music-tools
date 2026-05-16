@@ -1,5 +1,5 @@
 """
-Music Cache Builder  v2.0
+Music Cache Builder  v2.2
 ==========================
 Pre-builds the cache files used by find_music_duplicates.py so that duplicate
 scans start fast and the fingerprint pass runs near-instantly.
@@ -126,7 +126,8 @@ _perf        = CFG.get("performance", {})
 _acoustid    = CFG.get("acoustid", {})
 _output      = CFG.get("output", {})
 
-ORGANIZED    = Path(_path_arg or _folders.get("organized", ""))
+_org_str  = (_path_arg or _folders.get("organized", "") or "").strip()
+ORGANIZED = Path(_org_str) if _org_str else None   # None triggers folder picker
 REPORTS_DIR  = Path(_output.get("log_folder", ""))
 META_CACHE   = Path(_perf.get("cache_file", "music_cache.json"))
 FP_CACHE     = Path(_acoustid.get("fp_cache_file", "music_fp_cache.json"))
@@ -179,6 +180,24 @@ def fmt_size(n: int) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 #  METADATA CACHE
 # ══════════════════════════════════════════════════════════════════════════════
+
+
+def pick_folder():
+    """Open a folder picker dialog and return the selected Path, or None."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        chosen = filedialog.askdirectory(
+            title="Select your organised music library folder",
+        )
+        root.destroy()
+        return Path(chosen) if chosen else None
+    except Exception as e:
+        print(f"ERROR: Could not open folder picker: {e}")
+        return None
 
 _meta_lock = threading.Lock()
 
@@ -511,11 +530,20 @@ def copy_error_files(
 def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # ── Validate folder ────────────────────────────────────────────────────────
+    # ── Validate folder (fall back to picker if not set or not found) ──────────
+    global ORGANIZED
     if not ORGANIZED or not ORGANIZED.exists():
-        print(f"ERROR: Organized folder not found: {ORGANIZED}")
-        print("       Set 'organized' in music_config.json or use --path.")
-        sys.exit(1)
+        if _path_arg:
+            print(f"ERROR: Folder not found: {ORGANIZED}")
+            sys.exit(1)
+        chosen = pick_folder()
+        if not chosen:
+            print("No folder selected. Exiting.")
+            sys.exit(0)
+        if not chosen.exists():
+            print(f"ERROR: Selected folder does not exist: {chosen}")
+            sys.exit(1)
+        ORGANIZED = chosen
 
     # ── Header ─────────────────────────────────────────────────────────────────
     build_label = (
@@ -526,7 +554,7 @@ def main():
     rebuild_label = "FULL REBUILD" if REBUILD else "incremental"
 
     print(f"\n{'=' * 60}")
-    print(f"Music Cache Builder")
+    print(f"Music Cache Builder  v2.2")
     print(f"{'=' * 60}")
     print(f"  Mode      : {build_label}  [{rebuild_label}]")
     print(f"  Folder    : {ORGANIZED}")
@@ -596,21 +624,21 @@ def main():
                 print(f"  Cache file size : {fmt_size(FP_CACHE.stat().st_size)}")
 
             # ── Classify warnings and print ────────────────────────────────────
+            # Classify all warnings, then silently drop too_small — only corrupted files are reported
             warnings_classified = [
                 (path_str, reason, classify_warning(path_str))
                 for path_str, reason in warnings
+                if classify_warning(path_str) != "too_small"
             ]
 
             if warnings_classified:
-                too_small_count = sum(1 for _, _, c in warnings_classified if c == "too_small")
-                corrupted_count = sum(1 for _, _, c in warnings_classified if c == "corrupted")
+                corrupted_count = len(warnings_classified)
 
-                print(f"\n  WARNING: {len(warnings_classified)} file(s) flagged:")
-                print(f"    too_small : {too_small_count}  (too short to fingerprint)")
-                print(f"    corrupted : {corrupted_count}  (normal-sized but fingerprint failed)\n")
+                print(f"\n  WARNING: {corrupted_count} file(s) flagged as corrupted:")
+                print(f"    (too-small files are silently skipped)\n")
 
                 for path_str, reason, category in warnings_classified:
-                    print(f"    [{category:>9}]  {Path(path_str).name}")
+                    print(f"    [corrupted]  {Path(path_str).name}")
                     print(f"               {reason}")
                     print(f"               {path_str}")
 

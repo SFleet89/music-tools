@@ -2,14 +2,71 @@
 
 ---
 
-## anjuna_mb_lookup.py
+## flac_to_cue.py
 
-### v1.5 — 2026-04-21
+### v1.5 — 2026-04-25
+
+#### Fixed
+- Disc number detection now checks the filename **before** the `DISCNUMBER` tag. Scene rips commonly have `DISCNUMBER=1` written on every disc, causing all CD2 files to be matched as disc 1. Filename is now the primary source of truth, with the tag used as a last resort only.
+- Priority order for disc detection: scene prefix (`201-` = disc 2) → explicit keyword in filename (`CD2`, `Disc 2`) → sequential file prefix (`02.` = disc 2, only if value > 1) → parent folder keyword → `DISCNUMBER` tag.
+
+### v1.4 — 2026-04-25
+
+#### Fixed
+- CUE index format for releases over 99 minutes. Previously `63:54:00` was written for a track starting at 63 minutes — CUE Splitter interprets this as HH:MM:SS and fails with "Can't skip to initial audio data". Now correctly written as `01:03:54:00` (HH:MM:SS:FF) for any release over 99 minutes.
 
 #### Added
-- `RD`, `R2D`, `R3D` variant suffixes for remix releases. MusicBrainz commonly catalogues remix EPs as `ANJ131RD` rather than `ANJ131R` — these are now tried before falling back to other options.
-- Metadata fallback search: when all catno variants return no results, the script parses artist and title from the folder name and searches MusicBrainz by those fields. Catches releases that exist in MusicBrainz but are not indexed by catalogue number.
-- Matches found via the metadata fallback are tagged with `[meta fallback]` in the notes column.
+- Total duration check after disc matching: warns if MB data shows a combined track length over 200 minutes, which usually indicates the wrong release was matched (e.g. a multi-disc release being treated as a single disc).
+- Total duration shown in the console and log during processing so mismatches are visible before you confirm.
+
+### v1.3 — 2026-04-25
+
+#### Fixed
+- Tag reading now extracts catno from the ALBUM tag if no dedicated `CATALOGNUMBER` tag exists (e.g. `ANJCD008 VA - Anjunabeats Volume 5...` → catno `ANJCD008`). This was the primary cause of all 10 `no_match` results in the first run.
+- Album tag cleaned before searching — strips leading catno prefix, `VA -` prefix, and scene formatting so MB receives `Anjunabeats Volume 5 (Mixed By Above And Beyond)` instead of the raw scene string.
+- Log messages now accurately reflect what is actually being sent to the MB API.
+
+#### Added
+- Filename parsing as fallback strategies 4 and 5 for completely untagged files:
+  - Strategy 4: extract ANJ*/ANJCD* catno from filename → catno search
+  - Strategy 5: extract artist + title from filename → artist+album search
+- `parse_filename()` strips scene tags (WEB, FLAC, TT, FOX etc.), track number prefixes, and disc suffixes (CD1, CD2) before searching.
+
+### v1.2 — 2026-04-25
+
+#### Added
+- CSV report saved after every run — one row per FLAC processed, columns: file path, filename, disc number, MBID, MBID source, album, artist, track count, CUE path, status, notes.
+- Log file capturing all console output with timestamps and severity levels (INFO/WARNING/ERROR). Both saved to shared `tools\reports\` folder.
+- Status values in report: `written`, `skipped`, `no_match`, `api_error`, `write_error`.
+- Tracks with unknown lengths flagged with a warning in both the console and notes column.
+
+### v1.1 — 2026-04-25
+
+#### Added
+- `--scan` flag: recursively scans a folder tree for FLAC files that need CUE sheets. FLAC files that already have a matching `.cue` next to them are skipped automatically.
+- Default scan root is the music library path (`SD\Music`). Pass a path after `--scan` to override: `python flac_to_cue.py --scan "D:\Music"`.
+- `Run - FLAC to CUE.cmd` updated to offer scan vs picker choice at launch.
+
+### v1.0 — 2026-04-25
+
+#### Added
+- Initial release.
+- Reads `MUSICBRAINZ_ALBUMID` tag directly from FLAC files — no manual URL or configuration needed for files already tagged by the tagger.
+- Falls back to catalogue number search, then artist + album title search if no MBID tag is present.
+- Uses the MusicBrainz JSON API (not HTML scraping) for reliable, structured data.
+- Handles multi-disc releases — matches each FLAC to its correct disc by `DISCNUMBER` tag, filename, or folder name (e.g. `CD1`, `Disc 2`).
+- Release data cached per MBID — multi-disc folders only make one API call.
+- Track lengths converted to CUE frames (MM:SS:FF at 75 frames/sec) for maximum split precision.
+- Per-track PERFORMER set from MB artist-credit data, not hardcoded.
+- Unknown track lengths handled gracefully with a warning rather than a crash.
+- Output filename sanitised for Windows-illegal characters.
+- Previews the first 12 lines of the CUE before asking for confirmation.
+- Folder or file picker dialog when no path is specified on the command line.
+- Output CUE written next to the source FLAC file.
+
+---
+
+## anjuna_mb_lookup.py
 
 ### v1.4 — 2026-04-13
 

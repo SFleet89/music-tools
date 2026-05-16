@@ -1,0 +1,26 @@
+{
+  "skill_name": "music-tools-project-skill",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "eval-new-script",
+      "prompt": "Can you write me a new script for my music tools project? I need something that scans a folder and finds any subfolders that contain no music files at all (no .mp3, .flac, .aac, .m4a). Just list them — no deletions. Call it find_empty_folders.py and put it in a find_empty_folders subfolder with the usual cmd files.",
+      "expected_output": "A complete find_empty_folders.py that follows all project standards: dry-run default, --pick and --path flags, path validation, reports to <script_folder>/reports/, two .cmd files using --pick, README.md and CHANGELOG.md.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "eval_name": "eval-fix-existing",
+      "prompt": "I just noticed rename_album_folders.py is still using Path.rename() on line 594 instead of shutil.move. Can you fix that? Make sure to update the version number and CHANGELOG too.",
+      "expected_output": "Replaces Path.rename() with shutil.move(), adds import shutil if missing, bumps version in the docstring, and updates CHANGELOG.md with the fix dated today.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "eval_name": "eval-add-flag",
+      "prompt": "Can you add a --depth flag to rename_cd_folders.py? I want to be able to limit the scan to a specific folder depth — so --depth 2 would only look at folders that are exactly 2 levels below the root. If no --depth is given it should scan everything like it does now.",
+      "expected_output": "Adds --depth N flag with correct sys.argv parsing, applies depth filtering in find_cd_folders(), bumps version, updates README and CHANGELOG.",
+      "files": []
+    }
+  ]
+}
