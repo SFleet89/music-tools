@@ -2,6 +2,35 @@
 
 ---
 
+## README.md
+
+### v2.0 — 2026-05-26
+
+#### Changed
+- Full rewrite. Previous version (May 16) listed 5 tools and pointed to `duplicate_finder/` for config setup.
+- Now covers all 36 scripts across 18 tool folders.
+- Setup section updated: config is at project root `music_config.json`, created by `setup_music_tools.py` wizard.
+- Added: `fix_featuring`, `music_integrity`, `repair_playlists`, `sort_by_artist`, `rename_music_files`, `rename_undo`, `rename_to_catno`, `flac_to_cue`, `pipeline`, `report_viewer`, `mbz2cue`, `create_test_environment`, `music_cache.db` note.
+- Added shared modules section (`music_tools_common` v2.5, `music_mb_common` v1.0).
+- Requirements table expanded with MusicBrainz and fingerprinting packages.
+
+---
+
+## gui/ — PySide6 Application
+
+### v0.1 — 2026-05-26
+
+#### Added
+- Phase 1 GUI shell. New `gui/` subfolder with five modules:
+  - `main.py` — `QApplication` entry point
+  - `main_window.py` — `QMainWindow` with sidebar, `QStackedWidget`, log panel, status bar
+  - `settings_panel.py` — fully wired settings form: reads/saves all sections of `music_config.json` via `load_config()`; folder browse dialogs via `QFileDialog`
+  - `log_panel.py` — timestamped, colour-coded log widget with thread-safe `LogBridge` for use with `QThread`
+  - `theme.py` — VS Code-style dark stylesheet and colour constants
+- `Run - Music Tools GUI.cmd` launcher at project root.
+
+---
+
 ## music_tools_common.py
 
 ### v2.5 — 2026-05-25
