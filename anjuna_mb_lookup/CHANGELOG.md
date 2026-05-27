@@ -2,7 +2,50 @@
 
 ---
 
+## v1.2 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
+## v1.2 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
+## v1.4 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
+## v1.3 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
 ## anjuna_mb_lookup.py
+
+### v1.8 — 2026-05-25
+
+#### Changed
+- **PW-01**: Added `run_anjuna_mb_lookup(batch_path, auto_mode, reports_dir, progress_callback, log_callback) -> dict` — GUI-callable entry point. Raises `ValueError` for missing path. Returns `matched`, `auto_matched`, `review`, `not_found`, `errors`, `rows`, `report_path`.
+- Module-level `_args`/`_flags` variables removed; moved inside `main()`. No behaviour change when run from CLI.
+
+
+### v1.7 — 2026-05-17
+
+#### Fixed
+- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC`). Folder picker now opens at the OS default location.
+
+### v1.6 — 2026-05-17
+
+#### Changed
+- Refactored: imports `SUPPORTED_EXTENSIONS`, `MB_API_BASE`, `USER_AGENT`, `REQUEST_DELAY`, `RESULT_LIMIT`, `FUZZY_THRESHOLD`, `mb_get`, `mb_fetch_release`, `fuzzy_score`, `read_folder_metadata`, `combined_score`, `release_label`, `get_mb_catnos`, `move_flagged_folders` from the new shared module `music_mb_common.py`. Local duplicate implementations removed.
+- All Anjuna-specific code kept: `_CATNO_RE`, `DIGITAL_VARIANTS`, `REMIX_VARIANTS`, `OTHER_VARIANTS`, `extract_catno`, `normalise_catno`, `catno_base_and_suffix`, `generate_variants`, `parse_folder_artist_title`, `mb_search_catno` (local version), `mb_search_metadata`, `score_catno_match`, `score_metadata_match`, `scan_batch_folder` (returns tuples).
+- No behaviour change.
 
 ### v1.5 — 2026-04-21
 
@@ -23,10 +66,21 @@
 
 ## anjuna_tagger.py
 
-### v1.2 — 2026-04-12
+### v1.4 — 2026-05-25
+
+#### Changed
+- **PW-01**: Added `run_anjuna_tagger(csv_path, apply, skip_art, reports_dir, progress_callback, log_callback) -> dict` — GUI-callable entry point. Raises `ValueError` for missing CSV. Returns `tagged`, `would_tag`, `partial`, `skipped`, `errors`, `results`, `report_path`.
+- Module-level `interactive_options([])`, `APPLY`, `SKIP_ART`, `DRY_RUN` removed; moved inside `main()`. No behaviour change when run from CLI.
+
+
+### v1.2 — 2026-05-18
+
+#### Changed
+- Added `sys.path.insert` + `from music_tools_common import SUPPORTED_EXTENSIONS, sanitise_folder_name, load_csv`. Removes three local duplicate implementations.
+- Renamed local `get_music_files()` to `_get_audio_files()` to avoid shadowing the common module function. Logic unchanged (CD-subfolder-aware, different from common version).
 
 #### Fixed
-- Reports were being saved to the script's own subfolder instead of the shared `tools\reports\` folder. Fixed: path now uses `SCRIPT_DIR.parent / "reports"`.
+- Reports were being saved to the script's own subfolder instead of the shared `tools\reports\` folder. Fixed: path now uses `SCRIPT_DIR.parent / "reports"` for both the output path and the file picker `initialdir`.
 
 ### v1.1 — 2026-03-23
 
@@ -52,6 +106,31 @@
 ---
 
 ## mb_lookup.py
+
+### v3.1 — 2026-05-25
+
+#### Changed
+- **PW-01**: Added `run_mb_lookup(batch_path, auto_mode, no_fingerprint, fpcalc_path, reports_dir, progress_callback, log_callback) -> dict` — GUI-callable entry point. Raises `ValueError` for missing path. Returns `matched`, `auto_matched`, `review`, `not_found`, `errors`, `rows`, `report_path`.
+- Module-level `_positional`, `_flags`, `_fpcalc_arg`, `NO_FINGERPRINT` removed; moved inside `main()`. No behaviour change when run from CLI.
+
+
+### v3.0 — 2026-05-18
+
+#### Added
+- `run_fpcalc()` now checks the shared SQLite `fp_cache` table (in `music_cache.db`) before calling fpcalc. If the file's path and mtime match a cached entry, the stored fingerprint and duration are returned immediately — fpcalc is skipped. Falls through to fpcalc silently if the cache is unavailable or the entry is stale.
+- Added `sys.path.insert` and `from music_tools_common import open_db, DB_PATH` to support the cache lookup.
+
+### v2.9 — 2026-05-17
+
+#### Fixed
+- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\neo_s\Downloads\To Move`). Folder picker now opens at the OS default location.
+
+### v2.8 — 2026-05-17
+
+#### Changed
+- Refactored: imports shared constants and functions from `music_mb_common.py` — `SUPPORTED_EXTENSIONS`, `MB_API_BASE`, `USER_AGENT`, `REQUEST_DELAY`, `RESULT_LIMIT`, `FUZZY_THRESHOLD`, `CLEAR_WINNER_GAP`, `CLEAR_WINNER_MIN`, `CATNO_PREFIX_MAP`, `mb_get`, `mb_search`, `mb_search_catno`, `mb_search_artist_title`, `mb_search_title_only`, `mb_fetch_release`, `fuzzy_score`, `normalise`, `catno_search_variants`, `parse_folder_name`, `read_folder_metadata`, `scan_batch_folder`, `score_release`, `score_metadata`, `combined_score`, `build_artist_string`, `release_label`, `get_mb_catnos`, `move_flagged_folders`. Local duplicate implementations removed.
+- AcoustID-specific code (`ACOUSTID_API`, `ACOUSTID_KEY`, `ACOUSTID_DELAY`, `FPCALC_DEFAULT`, `FINGERPRINT_SAMPLE`, `MIN_SINGLE_MATCH_SCORE`, `_last_acoustid`, `run_fpcalc`, `acoustid_lookup`, `extract_release_ids_from_acoustid`, `fingerprint_folder`, `get_sample_files`) kept local.
+- No behaviour change.
 
 ### v2.7 — 2026-04-13
 
@@ -130,6 +209,24 @@
 
 ## tiesto_lookup.py
 
+### v2.0 — 2026-05-25
+
+#### Changed
+- **PW-01**: Added `run_tiesto_lookup(batch_path, auto_mode, reports_dir, progress_callback, log_callback) -> dict` — GUI-callable entry point. Raises `ValueError` for missing path. Returns `matched`, `auto_matched`, `review`, `not_found`, `errors`, `rows`, `report_path`.
+- Module-level `_args`, `_flags` removed; moved inside `main()`. No behaviour change when run from CLI.
+
+
+### v1.9 — 2026-05-17
+
+#### Fixed
+- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\neo_s\Downloads\To Move`). Folder picker now opens at the OS default location.
+
+### v1.8 — 2026-05-17
+
+#### Changed
+- Refactored: imports shared constants and functions from `music_mb_common.py` — same set as mb_lookup.py v2.8, minus AcoustID items. Local duplicate implementations removed.
+- No behaviour change.
+
 ### v1.7 — 2026-04-13
 
 #### Fixed
@@ -179,6 +276,20 @@
 
 ## tagger_undo.py
 
+### v1.3 — 2026-05-25
+
+#### Changed
+- **PW-01**: Added `run_tagger_undo(csv_path, apply, reports_dir, progress_callback, log_callback) -> dict` — GUI-callable entry point. Raises `ValueError` for missing CSV. Returns `undone`, `would_undo`, `errors`, `results`, `report_path`.
+- Module-level `interactive_options([])`, `APPLY`, `DRY_RUN` removed; moved inside `main()`. No behaviour change when run from CLI.
+
+
+### v1.1 — 2026-05-18
+
+#### Changed
+- Added `sys.path.insert` + `from music_tools_common import load_csv`. Removes local duplicate `load_csv()` function.
+
+---
+
 ### v1.0 — 2026-04-12
 
 #### Added
@@ -193,6 +304,21 @@
 ---
 
 ## move_from_report.py
+
+### v1.3 — 2026-05-25
+
+#### Changed
+- **PW-01**: Added `run_move_from_report(csv_path, apply, progress_callback, log_callback) -> dict` — GUI-callable entry point. Raises `ValueError` for missing or non-CSV path. Returns `moved`, `would_move`, `skipped_missing`, `errors`.
+- Module-level `_args`, `_flags` and trailing `interactive_options([])` call removed; moved inside `main()`. No behaviour change when run from CLI.
+
+
+### v1.1 — 2026-05-18
+
+#### Changed
+- Added `sys.path.insert` + `from music_tools_common import load_csv`. Removes local duplicate `load_csv()` function.
+- Fixed hardcoded `initialdir` in file picker: was pointing to `C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports`; now resolves to `<project root>/reports` dynamically.
+
+---
 
 ### v1.0 — 2026-04-13
 
@@ -211,6 +337,28 @@
 ---
 
 ## mb_tagger.py
+
+### v1.5 — 2026-05-25
+
+#### Changed
+- **PW-01**: Added `run_mb_tagger(csv_path, apply, skip_art, reports_dir, progress_callback, log_callback) -> dict` — GUI-callable entry point. Raises `ValueError` for missing CSV. Returns `tagged`, `would_tag`, `partial`, `skipped`, `errors`, `results`, `report_path`.
+- Module-level `interactive_options([])`, `APPLY`, `SKIP_ART`, `DRY_RUN` removed; moved inside `main()`. No behaviour change when run from CLI.
+
+
+### v1.3 — 2026-05-18
+
+#### Fixed
+- `reports_dir` and `initialdir` in the CSV file picker were pointing to `SCRIPT_DIR / "reports"` (inside `anjuna_mb_lookup/`) instead of `SCRIPT_DIR.parent / "reports"` (the shared suite-root reports folder). Fixed to match all other suite scripts.
+- Truncation bug: file ended with `if __name__ == "__main__` cut mid-line. Restored closing `":\n    main()`.
+
+---
+
+### v1.2 — 2026-05-17
+
+#### Changed
+- Refactored: imports `SUPPORTED_EXTENSIONS`, `MB_API_BASE`, `USER_AGENT`, `REQUEST_DELAY`, `mb_get` from shared module `music_mb_common.py`. Local `_last_request` variable and `mb_get` function removed.
+- Local `mb_fetch_release` kept — it uses `inc="recordings artist-credits labels release-groups"` (the extra `release-groups` is required by `get_release_year()`; the shared module omits it).
+- No behaviour change.
 
 ### v1.1 — 2026-04-12
 

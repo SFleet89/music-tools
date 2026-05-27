@@ -8,7 +8,9 @@ Nothing is moved until you confirm. Dry run by default.
 
 ## How it works
 
-For each folder it scans, the script reads the DISCNUMBER tag from every music file. If files with two or more different disc numbers are found, they get moved into the appropriate CD subfolder. Folders that are already sorted (already have CD subfolders) or only have a single disc are left untouched.
+For each folder it scans, the script reads the DISCNUMBER tag from every music file. Files are moved into CD1/, CD2/ etc. subfolders based on their disc number. This works whether an album has one disc or several — a folder containing only disc-1 files will have those files moved into CD1/, and a two-disc album gets both CD1/ and CD2/ created.
+
+If you point the script at a parent folder that contains album subfolders (rather than music files directly), it automatically switches to recursive mode and scans all subfolders — no need to pass `--recursive` manually.
 
 Handles both disc number formats:
 - Plain number — `1`, `2`
@@ -20,15 +22,6 @@ Handles both disc number formats:
 
 ```
 pip install mutagen
-```
-
----
-
-## Setup
-
-Set the reports folder path at the top of the script:
-```python
-REPORTS_FOLDER = r"C:\Users\neo_s\...\tools\sort_cd_tracks\reports"
 ```
 
 ---
@@ -63,7 +56,7 @@ python sort_cd_tracks.py --recursive --apply
 | Flag | Description |
 |---|---|
 | `--apply` | Move for real. Without this the script is always a dry run. |
-| `--recursive` | Scan all subfolders of the target rather than just the target itself. Skips folders that are already sorted or single-disc. |
+| `--recursive` | Scan all subfolders of the target rather than just the target itself. Usually not needed — the script auto-detects this when no music files are found directly in the pointed folder. |
 | `--path PATH` | Override the folder path, skips the dialog. |
 
 ---
@@ -73,8 +66,7 @@ python sort_cd_tracks.py --recursive --apply
 | Situation | What happens |
 |---|---|
 | Folder already has CD subfolders | Skipped entirely |
-| All files have the same disc number | Skipped (single disc, nothing to sort) |
-| No DISCNUMBER tags found | Skipped with a warning |
+| No DISCNUMBER tags found in any file | Skipped with a warning |
 | File has no disc tag but others in the folder do | Left in place, noted in report |
 | Destination file already exists | Skipped with a warning |
 

@@ -1,5 +1,5 @@
 """
-Rename to CATNO  v1.1
+Rename to CATNO  v1.5
 ======================
 Renames album folders to: CATNO - Album Name
 (e.g. "Above & Beyond - We Are All We Need (2015)" → "ANJCD043 - We Are All We Need")
@@ -15,30 +15,28 @@ Requirements:
     pip install mutagen
 
 Usage:
-    python rename_to_catno.py                   # opens folder picker
-    python rename_to_catno.py "C:\\path\\to\\Music"
-    python rename_to_catno.py "C:\\path\\to\\Music" --apply
+    python rename_to_catno.py                   # opens folder picker (dry run)
+    python rename_to_catno.py --pick            # opens folder picker (dry run)
+    python rename_to_catno.py --pick --apply    # opens folder picker and renames
+    python rename_to_catno.py --path "C:\\Music" --apply
 
 Output:
     Reports saved to: <script folder>\\reports\\rename_to_catno_YYYYMMDD_HHMMSS.csv
-
-Changes in v1.1:
-    - Catno falls back to folder name parsing if no tag present (or tag is
-      a placeholder like "none"). Uses ANJ/ANJCD/ANJDEEP regex.
-    - Catno normalised to no-hyphen format: ANJ-001 -> ANJ001.
-    - Album " / " separators replaced with " & " (double A-side releases).
-    - Double spaces collapsed after sanitising.
-
-Changes in v1.0:
-    - Initial release.
 """
 
 import sys
 import re
-import csv
 import shutil
 from pathlib import Path
 from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import (
+    SUPPORTED_EXTENSIONS,
+    pick_folder,
+    write_csv,
+    interactive_options,
+)
 
 # ── Optional mutagen ───────────────────────────────────────────────────────────
 try:
@@ -51,8 +49,7 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
-SCRIPT_DIR           = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).parent
 
 # Windows-illegal filename characters
 _ILLEGAL_RE = re.compile(r'[\\/:*?"<>|]')
@@ -66,19 +63,20 @@ _CATNO_RE = re.compile(
 # Placeholder values that should be treated as no catno
 _NONE_VALUES = {"none", "n/a", "na", "", "-"}
 
+FIELDNAMES = [
+    "folder_path", "original_name", "new_name",
+    "catno", "album", "status", "notes",
+]
+
 
 def normalise_catno(catno):
     """
     Normalise catno to consistent format: remove internal hyphens/spaces
     between the letter prefix and the number.
-    ANJ-001  -> ANJ001
-    ANJ -001 -> ANJ001
-    ANJ CD007 -> ANJCD007
-    ANJ005RD stays ANJ005RD
+    ANJ-001 -> ANJ001, ANJ CD007 -> ANJCD007
     """
     if not catno:
         return None
-    # Remove spaces/hyphens between prefix letters and digits
     c = re.sub(r'(ANJ(?:CD|DEEP|UNA|WW)?)\s*-?\s*(\d)', r'\1\2', catno,
                flags=re.IGNORECASE)
     return c.upper().strip()
@@ -155,7 +153,7 @@ def read_release_info(folder_path):
                 album = _vorbis_get(tags, "ALBUM")
 
             elif ext == ".mp3":
-                catno  = _id3_txxx(tags, "CATALOGNUMBER", "CATALOGNUMBER", "CATALOG NUMBER")
+                catno  = _id3_txxx(tags, "CATALOGNUMBER", "CATALOG NUMBER")
                 talb   = tags.get("TALB")
                 album  = str(talb) if talb else None
 
@@ -167,8 +165,7 @@ def read_release_info(folder_path):
                 album  = str(alb[0]) if alb else None
 
             else:
-                # Generic fallback via easy tags
-                easy = MutagenFile(f, easy=True)
+                easy  = MutagenFile(f, easy=True)
                 catno = None
                 album = None
                 if easy:
@@ -214,9 +211,9 @@ def find_album_folders(root_path):
 
 def sanitize(name):
     """Strip Windows-illegal characters, replace / separators, collapse spaces."""
-    s = name.replace(" / ", " & ")          # double A-side: "A / B" -> "A & B"
+    s = name.replace(" / ", " & ")
     s = _ILLEGAL_RE.sub("", s)
-    s = re.sub(r'  +', ' ', s)             # collapse double spaces
+    s = re.sub(r'  +', ' ', s)
     return s.strip(" .")
 
 
@@ -233,90 +230,6 @@ def build_new_name(catno, album):
     return None
 
 
-# ── Main logic ─────────────────────────────────────────────────────────────────
-
-def run_rename(root_path, apply_mode):
-    folders = find_album_folders(root_path)
-    total   = len(folders)
-
-    if total == 0:
-        print("  No album folders found in: %s" % root_path)
-        return []
-
-    print()
-    print("  Found %d album folder(s) to process." % total)
-    print()
-
-    rows = []
-
-    for idx, folder in enumerate(folders, 1):
-        catno, album = read_release_info(str(folder))
-        original     = folder.name
-
-        print("  [%d/%d]  %s" % (idx, total, original))
-
-        # Guard placeholder catno values
-        if catno and catno.lower().strip() in _NONE_VALUES:
-            catno = None
-
-        # Normalise catno format: ANJ-001 -> ANJ001
-        if catno:
-            catno = normalise_catno(catno)
-
-        # Fallback: parse catno from folder name if tag missing
-        if not catno:
-            catno = catno_from_folder_name(original)
-            if catno:
-                print("          ~ No catno tag — parsed from folder name: %s" % catno)
-
-        new_name = build_new_name(catno, album)
-
-        if not catno:
-            print("          ✗ No catalogue number tag found")
-            rows.append(_row(folder, original, None, catno, album,
-                             "skipped", "No catalogue number tag found"))
-            continue
-
-        if not album:
-            print("          ✗ No album tag found")
-            rows.append(_row(folder, original, None, catno, album,
-                             "skipped", "No album tag found"))
-            continue
-
-        if new_name == original:
-            print("          ~ Already correct name, skipping")
-            rows.append(_row(folder, original, new_name, catno, album,
-                             "skipped", "Name already correct"))
-            continue
-
-        dest = folder.parent / new_name
-
-        if dest.exists():
-            print("          ! Destination already exists: %s" % new_name)
-            rows.append(_row(folder, original, new_name, catno, album,
-                             "error", "Destination already exists: %s" % new_name))
-            continue
-
-        print("          → %s" % new_name)
-
-        if not apply_mode:
-            rows.append(_row(folder, original, new_name, catno, album,
-                             "pending", "Dry run — would rename"))
-            continue
-
-        try:
-            shutil.move(str(folder), str(dest))
-            rows.append(_row(dest, original, new_name, catno, album,
-                             "renamed", "OK"))
-            print("          ✓ Renamed")
-        except Exception as e:
-            rows.append(_row(folder, original, new_name, catno, album,
-                             "error", "Rename failed: %s" % e))
-            print("          ! Error: %s" % e)
-
-    return rows
-
-
 def _row(folder, original, new_name, catno, album, status, notes):
     return {
         "folder_path":   str(folder),
@@ -329,94 +242,173 @@ def _row(folder, original, new_name, catno, album, status, notes):
     }
 
 
-# ── CSV output ─────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
 
-FIELDNAMES = [
-    "folder_path", "original_name", "new_name",
-    "catno", "album", "status", "notes",
-]
+def run_rename_to_catno(
+    folder: Path,
+    apply: bool = False,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Scan folder and rename album subfolders to CATNO - Album Name.
 
+    Args:
+        folder:            Root folder to scan recursively.
+        apply:             False = dry run; True = rename folders.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
 
-def write_csv(rows, output_path):
-    with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
+    Returns:
+        dict: renamed, pending, skipped, errors, results (list of row dicts),
+              report_path (Path|None)
 
+    Raises:
+        ValueError: folder does not exist or is not a directory.
+    """
+    log = log_callback or print
 
-def print_summary(rows, apply_mode, output_path):
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Folder not found: {folder}")
+
+    folders = find_album_folders(folder)
+    total   = len(folders)
+
+    if total == 0:
+        log(f"  No album folders found in: {folder}")
+        return {"renamed": 0, "pending": 0, "skipped": 0, "errors": 0,
+                "results": [], "report_path": None}
+
+    log(f"  Found {total} album folder(s) to process.")
+
+    rows = []
+
+    for idx, f in enumerate(folders, 1):
+        if progress_callback:
+            progress_callback(idx, total, f.name)
+
+        catno, album = read_release_info(str(f))
+        original     = f.name
+
+        if catno and catno.lower().strip() in _NONE_VALUES:
+            catno = None
+
+        if catno:
+            catno = normalise_catno(catno)
+
+        if not catno:
+            catno = catno_from_folder_name(original)
+            if catno:
+                log(f"  [{idx}/{total}]  {original}")
+                log(f"          ~ No catno tag — parsed from folder name: {catno}")
+
+        new_name = build_new_name(catno, album)
+
+        if not catno:
+            log(f"  [{idx}/{total}]  {original}  → no catalogue number")
+            rows.append(_row(f, original, None, catno, album,
+                             "skipped", "No catalogue number tag found"))
+            continue
+
+        if not album:
+            log(f"  [{idx}/{total}]  {original}  → no album tag")
+            rows.append(_row(f, original, None, catno, album,
+                             "skipped", "No album tag found"))
+            continue
+
+        if new_name == original:
+            rows.append(_row(f, original, new_name, catno, album,
+                             "skipped", "Name already correct"))
+            continue
+
+        dest = f.parent / new_name
+
+        if dest.exists():
+            log(f"  [{idx}/{total}]  {original}  → CONFLICT: {new_name}")
+            rows.append(_row(f, original, new_name, catno, album,
+                             "error", f"Destination already exists: {new_name}"))
+            continue
+
+        log(f"  [{idx}/{total}]  {original}")
+        log(f"          → {new_name}")
+
+        if not apply:
+            rows.append(_row(f, original, new_name, catno, album,
+                             "pending", "Dry run — would rename"))
+            continue
+
+        try:
+            shutil.move(str(f), str(dest))
+            rows.append(_row(dest, original, new_name, catno, album, "renamed", "OK"))
+        except Exception as e:
+            rows.append(_row(f, original, new_name, catno, album,
+                             "error", f"Rename failed: {e}"))
+            log(f"          ! Error: {e}")
+
+    # ── Write report ───────────────────────────────────────────────────────────
+    reports_dir = SCRIPT_DIR / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix  = "applied" if apply else "dry"
+    report_path = reports_dir / f"rename_to_catno_{ts}_{suffix}.csv"
+    write_csv(rows, str(report_path), fieldnames=FIELDNAMES)
+    log(f"  Report saved: {report_path}")
+
     counts = {}
     for r in rows:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
 
-    print()
-    print("=" * 60)
-    print("  SUMMARY  (%s)" % ("APPLY" if apply_mode else "DRY RUN"))
-    print("=" * 60)
-    if apply_mode:
-        print("  Renamed            : %d" % counts.get("renamed", 0))
-    else:
-        print("  Would rename       : %d" % counts.get("pending", 0))
-    print("  Already correct    : %d" % counts.get("skipped", 0))
-    print("  Errors / conflicts : %d" % counts.get("error", 0))
-    print()
-    print("  Report saved to:")
-    print("  %s" % output_path)
-    print("=" * 60)
+    return {
+        "renamed":     counts.get("renamed", 0),
+        "pending":     counts.get("pending", 0),
+        "skipped":     counts.get("skipped", 0),
+        "errors":      counts.get("error", 0),
+        "results":     rows,
+        "report_path": report_path,
+    }
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
-
-def pick_folder():
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        chosen = filedialog.askdirectory(
-            title="Select folder to rename album subfolders in",
-            initialdir=r"C:\Users\neo_s\Downloads\To Move\Music",
-        )
-        root.destroy()
-        return chosen or None
-    except Exception as e:
-        print("ERROR: Could not open folder picker: %s" % e)
-        return None
-
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLI ENTRY POINT  ← .cmd launchers call this; GUI does not
+# ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    interactive_options([])
+
     args       = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags      = [a for a in sys.argv[1:] if a.startswith("--")]
     apply_mode = "--apply" in flags
+    pick_dir   = "--pick"  in flags
 
-    if args:
+    _path_flag = next(
+        (sys.argv[i + 1] for i, a in enumerate(sys.argv)
+         if a == "--path" and i + 1 < len(sys.argv)),
+        None,
+    )
+
+    if _path_flag:
+        root_path = Path(_path_flag.strip('"'))
+    elif args:
         root_path = Path(args[0].strip('"'))
-    else:
-        chosen = pick_folder()
+    elif pick_dir or True:   # default to folder picker if no path given
+        chosen = pick_folder("Select folder to rename album folders in")
         if not chosen:
             print("No folder selected. Exiting.")
             sys.exit(0)
         root_path = Path(chosen)
 
     if not root_path.exists() or not root_path.is_dir():
-        print("ERROR: Folder not found: %s" % root_path)
+        print(f"ERROR: Folder not found: {root_path}")
         sys.exit(1)
-
-    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    reports_dir = SCRIPT_DIR.parent / "reports"
-    reports_dir.mkdir(exist_ok=True)
-    suffix      = "_applied" if apply_mode else "_dry"
-    output_path = reports_dir / ("rename_to_catno_%s%s.csv" % (timestamp, suffix))
 
     print()
     print("=" * 60)
-    print("  Rename to CATNO  v1.1")
+    print("  Rename to CATNO  v1.5")
     print("=" * 60)
-    print("  Folder : %s" % root_path)
-    print("  Mode   : %s" % ("APPLY — renaming for real" if apply_mode
-                              else "DRY RUN — no changes made"))
-    print("  Output : %s" % output_path)
+    print(f"  Folder : {root_path}")
+    print(f"  Mode   : {'APPLY — renaming for real' if apply_mode else 'DRY RUN — no changes made'}")
     print("=" * 60)
 
     if apply_mode:
@@ -425,13 +417,28 @@ def main():
             print("  Aborted.")
             sys.exit(0)
 
-    rows = run_rename(str(root_path), apply_mode)
+    try:
+        result = run_rename_to_catno(root_path, apply=apply_mode)
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
-    if rows:
-        write_csv(rows, str(output_path))
-        print_summary(rows, apply_mode, str(output_path))
+    counts = {}
+    for r in result["results"]:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+    print()
+    print("=" * 60)
+    print(f"  SUMMARY  ({'APPLY' if apply_mode else 'DRY RUN'})")
+    print("=" * 60)
+    if apply_mode:
+        print(f"  Renamed            : {counts.get('renamed', 0)}")
     else:
-        print("  No results to save.")
+        print(f"  Would rename       : {counts.get('pending', 0)}")
+    print(f"  Already correct    : {counts.get('skipped', 0)}")
+    print(f"  Errors / conflicts : {counts.get('error', 0)}")
+    print(f"  Report             : {result['report_path']}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

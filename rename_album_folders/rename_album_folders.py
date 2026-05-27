@@ -1,15 +1,8 @@
 """
-Album Folder Renamer  v2.0
+Album Folder Renamer  v2.6
 ===========================
 Reads the album tag from music files in each subfolder and renames the folder
 to match the album name.
-
-New in v2.0:
-  - Reports saved after every run (dry and live)
-  - Track titles shown in conflict prompt to help identify the right album
-  - --filter flag: skip folders already correctly named (faster on large libraries)
-  - --depth N flag: only rename at a specific folder depth (e.g. 2 for Artist/Album)
-  - Cross-folder collision detection before renaming
 
 Conflict handling:
   - If all files agree on the album name → rename automatically
@@ -36,9 +29,20 @@ Requirements:
 import sys
 import csv
 import re
+import shutil
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import (
+    SUPPORTED_EXTENSIONS as SUPPORTED_EXT,
+    sanitise_folder_name,
+    get_music_files,
+    read_file_tags,
+    config_organized_folder,
+    interactive_options,
+)
 
 try:
     from mutagen import File as MutagenFile
@@ -48,54 +52,8 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
-SUPPORTED_EXT   = {".mp3", ".flac", ".aac", ".m4a"}
-
-# ── Parse flags ────────────────────────────────────────────────────────────────
-DRY_RUN    = "--apply"  not in sys.argv
-PICK_DIR   = "--pick"   in sys.argv
-FILTER_OK  = "--filter" in sys.argv   # skip folders already correctly named
-
-_path  = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
-               if a == "--path"  and i+1 < len(sys.argv)), None)
-_depth = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
-               if a == "--depth" and i+1 < len(sys.argv)), None)
-MAX_DEPTH  = int(_depth) if _depth and _depth.isdigit() else None
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  METADATA HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def read_file_tags(path: Path) -> dict:
-    """Read album, title, and tracknumber from a music file."""
-    result = {"album": None, "title": None, "tracknumber": None}
-    try:
-        f = MutagenFile(path, easy=True)
-        if f:
-            for key in ("album", "title", "tracknumber"):
-                val = f.get(key)
-                if val:
-                    result[key] = val[0].strip() or None
-    except Exception:
-        pass
-    return result
-
-
-def sanitise_folder_name(name: str) -> str:
-    """Remove characters illegal in Windows folder names."""
-    for ch in r'<>:"/\\|?*':
-        name = name.replace(ch, "")
-    return name.strip(". ")
-
-
-def get_music_files(folder: Path) -> list[Path]:
-    """Return all music files directly in this folder (not recursive)."""
-    return sorted(
-        f for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXT
-    )
+SCRIPT_DIR     = Path(__file__).parent
+REPORTS_FOLDER = SCRIPT_DIR / "reports"
 
 
 def folder_depth(folder: Path, root: Path) -> int:
@@ -106,18 +64,14 @@ def folder_depth(folder: Path, root: Path) -> int:
         return 0
 
 
-
-
 # Matches CD/Disc/Disk subfolder names: CD1, CD 1, Disc2, Disk 10 etc.
 _CD_RE = re.compile(r'^(cd|disc|disk)\s*\d+$', re.IGNORECASE)
 
 
-def get_cd_subfolders(folder: Path) -> list[Path]:
+def get_cd_subfolders(folder: Path) -> list:
     """
     If ALL subdirectories of folder match the CD/Disc/Disk pattern, return
     them sorted. Otherwise return an empty list.
-    Only triggers when every subdir looks like a disc folder — prevents false
-    positives on folders with one oddly-named subfolder.
     """
     try:
         subdirs = [d for d in folder.iterdir() if d.is_dir()]
@@ -129,10 +83,10 @@ def get_cd_subfolders(folder: Path) -> list[Path]:
     return sorted(cd_dirs) if len(cd_dirs) == len(subdirs) else []
 
 
-def get_album_for_cd_parent(folder: Path) -> tuple[str | None, str, list[dict]]:
+def get_album_for_cd_parent(folder: Path):
     """
     Read album tags from all music files across all CD subfolders combined.
-    Returns same (album, status, file_tags) signature as get_album_for_folder.
+    Returns (album, status, file_tags).
     """
     cd_dirs = get_cd_subfolders(folder)
     if not cd_dirs:
@@ -156,11 +110,12 @@ def get_album_for_cd_parent(folder: Path) -> tuple[str | None, str, list[dict]]:
         return counts.most_common(1)[0][0], "ok", all_file_tags
     return None, "conflict", all_file_tags
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  ALBUM DETECTION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_album_for_folder(folder: Path) -> tuple[str | None, str, list[dict]]:
+def get_album_for_folder(folder: Path):
     """
     Read tags from all music files in folder.
     Returns (album_name, status, file_tags) where:
@@ -187,16 +142,15 @@ def get_album_for_folder(folder: Path) -> tuple[str | None, str, list[dict]]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CONFLICT PROMPT
+#  CONFLICT PROMPT  (CLI only — GUI supplies its own resolver via callback)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def prompt_conflict(folder: Path, file_tags: list[dict]) -> str | None:
+def prompt_conflict(folder: Path, file_tags: list) -> str:
     """
     Show conflicting album tags with track titles and ask the user to choose.
     Returns chosen album name, or None to skip.
     """
-    # Group files by album tag
-    by_album: dict[str, list[dict]] = {}
+    by_album = {}
     for t in file_tags:
         if t["album"]:
             by_album.setdefault(t["album"], []).append(t)
@@ -208,11 +162,10 @@ def prompt_conflict(folder: Path, file_tags: list[dict]) -> str | None:
     options = sorted(by_album.items(), key=lambda x: -len(x[1]))
     for i, (album, tracks) in enumerate(options, start=1):
         print(f"    [{i}] {album}  ({len(tracks)} file(s))")
-        # Show up to 4 track titles to help identify the album
         sorted_tracks = sorted(tracks, key=lambda t: t.get("tracknumber") or "")
         for t in sorted_tracks[:4]:
-            title = t.get("title") or t["file"].name
-            tn    = t.get("tracknumber")
+            title  = t.get("title") or t["file"].name
+            tn     = t.get("tracknumber")
             prefix = f"{tn}. " if tn else "    "
             print(f"         {prefix}{title}")
         if len(tracks) > 4:
@@ -242,36 +195,24 @@ def prompt_conflict(folder: Path, file_tags: list[dict]) -> str | None:
 #  SCAN
 # ══════════════════════════════════════════════════════════════════════════════
 
-def find_album_folders(root: Path) -> list[dict]:
+def find_album_folders(root: Path, max_depth: int = None, filter_ok: bool = False) -> list:
     """
-    Walk tree, find folders to rename. Handles two structures:
-      1. Normal: folder contains music files directly
-      2. Multi-CD: folder contains only CD1/CD2/Disc1/Disc2 subfolders
-
-    For multi-CD folders the PARENT is renamed — the CD subfolders are left
-    untouched. Traversal is depth-first (shallow before deep) so parents are
-    always evaluated before their children, which is required for correct
-    multi-CD detection.
-
-    Respects MAX_DEPTH and FILTER_OK flags.
+    Walk tree, find folders to rename. Handles normal and multi-CD structures.
     """
-    # Collect all subdirectories, sorted shallowest-first so parents are
-    # always visited before their children.
     all_dirs = sorted(
         (d for d in root.rglob("*") if d.is_dir()),
-        key=lambda d: len(d.parts)
+        key=lambda d: len(d.parts),
     )
 
-    candidates  = []
-    skip_folders: set[Path] = set()   # CD subfolders claimed by a parent
+    candidates   = []
+    skip_folders = set()
 
     for folder in all_dirs:
         if folder in skip_folders:
             continue
 
-        # Depth filter
-        if MAX_DEPTH is not None:
-            if folder_depth(folder, root) != MAX_DEPTH:
+        if max_depth is not None:
+            if folder_depth(folder, root) != max_depth:
                 continue
 
         try:
@@ -279,27 +220,24 @@ def find_album_folders(root: Path) -> list[dict]:
         except ValueError:
             rel = str(folder)
 
-        # ── Multi-CD check: does this folder contain only CD subfolders? ──
         cd_dirs = get_cd_subfolders(folder)
         if cd_dirs:
-            # Mark all CD subfolders so they are skipped later
             for cd in cd_dirs:
                 skip_folders.add(cd)
 
             album, status, file_tags = get_album_for_cd_parent(folder)
 
-            if FILTER_OK and status == "ok" and album:
+            if filter_ok and status == "ok" and album:
                 if sanitise_folder_name(album) == folder.name:
                     continue
 
-            all_files = [t["file"] for t in file_tags]
             candidates.append({
                 "folder":    folder,
                 "rel":       rel,
                 "status":    status,
                 "album":     album,
                 "file_tags": file_tags,
-                "files":     all_files,
+                "files":     [t["file"] for t in file_tags],
                 "current":   folder.name,
                 "new_name":  None,
                 "multi_cd":  True,
@@ -307,14 +245,13 @@ def find_album_folders(root: Path) -> list[dict]:
             })
             continue
 
-        # ── Normal check: does this folder contain music files directly? ──
         files = get_music_files(folder)
         if not files:
             continue
 
         album, status, file_tags = get_album_for_folder(folder)
 
-        if FILTER_OK and status == "ok" and album:
+        if filter_ok and status == "ok" and album:
             if sanitise_folder_name(album) == folder.name:
                 continue
 
@@ -337,7 +274,7 @@ def find_album_folders(root: Path) -> list[dict]:
 #  FOLDER PICKER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def pick_folders() -> list[Path]:
+def pick_folders() -> list:
     """Open a native folder-picker dialog. Allows picking multiple folders."""
     try:
         import tkinter as tk
@@ -376,7 +313,7 @@ def pick_folders() -> list[Path]:
 #  REPORT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def write_report(candidates: list[dict], reports_dir: Path, dry_run: bool):
+def write_report(candidates: list, reports_dir: Path, dry_run: bool) -> "Path | None":
     try:
         reports_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -420,57 +357,230 @@ def write_report(candidates: list[dict], reports_dir: Path, dry_run: bool):
             writer.writeheader()
             writer.writerows(rows)
 
-        print(f"  Report saved: {out_path}\n")
+        return out_path
     except Exception as e:
         print(f"  WARNING: Could not write report: {e}\n")
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MAIN
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_rename_album_folders(
+    folder: Path,
+    apply: bool = False,
+    filter_ok: bool = False,
+    max_depth: int = None,
+    conflict_resolver=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Scan folder and rename album subfolders to match their album tags.
+
+    Args:
+        folder:            Root folder to scan recursively.
+        apply:             False = dry run; True = rename folders.
+        filter_ok:         Skip folders already correctly named.
+        max_depth:         Only rename at this folder depth (None = all depths).
+        conflict_resolver: Optional callable(folder, file_tags) -> str|None.
+                           Called when files disagree on the album name.
+                           GUI supplies its own UI; CLI uses prompt_conflict().
+                           If None, conflicts are flagged but skipped.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: renamed, skipped, errors, conflicts, results (list of candidate
+              dicts), report_path (Path|None)
+
+    Raises:
+        ValueError: folder does not exist or is not a directory.
+    """
+    log = log_callback or print
+
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Folder not found: {folder}")
+
+    log("  Scanning...")
+    candidates = find_album_folders(folder, max_depth=max_depth, filter_ok=filter_ok)
+
+    if not candidates:
+        log("  No folders with music files found.")
+        return {"renamed": 0, "skipped": 0, "errors": 0, "conflicts": 0,
+                "results": [], "report_path": None}
+
+    if progress_callback:
+        progress_callback(len(candidates), len(candidates), "Scan complete")
+
+    ok_folders       = [c for c in candidates if c["status"] == "ok"]
+    conflict_folders = [c for c in candidates if c["status"] == "conflict"]
+    empty_folders    = [c for c in candidates if c["status"] == "empty"]
+
+    log(f"  Folders found      : {len(candidates)}")
+    log(f"  Album tag clear    : {len(ok_folders)}")
+    log(f"  Conflicts          : {len(conflict_folders)}")
+    log(f"  No album tag       : {len(empty_folders)}")
+
+    # ── Resolve conflicts ──────────────────────────────────────────────────────
+    for c in conflict_folders:
+        if conflict_resolver:
+            chosen    = conflict_resolver(c["folder"], c["file_tags"])
+            c["album"]  = chosen
+            c["status"] = "resolved" if chosen else "skipped"
+        else:
+            c["status"] = "skipped — conflict needs resolution"
+
+    # ── Cross-folder collision check ───────────────────────────────────────────
+    collision_map = {}
+    for c in candidates:
+        album = c.get("album")
+        if not album or c["status"] not in ("ok", "resolved"):
+            continue
+        new_name = sanitise_folder_name(album)
+        if new_name == c["current"]:
+            continue
+        key = (c["folder"].parent, new_name)
+        collision_map.setdefault(key, []).append(c)
+
+    collisions = {k: v for k, v in collision_map.items() if len(v) > 1}
+    if collisions:
+        log(f"  WARNING: {len(collisions)} naming collision(s) detected — will be skipped.")
+        for (parent, name), group in collisions.items():
+            for c in group:
+                c["status"] = "skipped — naming collision"
+
+    # ── Resolve proposed names ─────────────────────────────────────────────────
+    to_rename = []
+    for c in candidates:
+        album = c.get("album")
+        if not album or c["status"] not in ("ok", "resolved"):
+            continue
+        new_name      = sanitise_folder_name(album)
+        c["new_name"] = new_name
+        if new_name != c["current"]:
+            to_rename.append(c)
+        else:
+            c["status"] = "already correct"
+
+    log(f"  To rename          : {len(to_rename)}")
+
+    # ── Dry run ────────────────────────────────────────────────────────────────
+    if not apply:
+        report_path = write_report(candidates, REPORTS_FOLDER, dry_run=True)
+        if report_path:
+            log(f"  Report saved: {report_path}")
+        renamed    = sum(1 for c in candidates if c.get("new_name") and c["new_name"] != c["current"])
+        return {
+            "renamed":    0,
+            "pending":    renamed,
+            "skipped":    sum(1 for c in candidates if "skipped" in c.get("status", "")),
+            "errors":     0,
+            "conflicts":  len(conflict_folders),
+            "results":    candidates,
+            "report_path": report_path,
+        }
+
+    # ── Apply ──────────────────────────────────────────────────────────────────
+    renamed = 0
+    errors  = 0
+
+    for i, c in enumerate(to_rename):
+        if progress_callback:
+            progress_callback(i + 1, len(to_rename), c["current"])
+
+        new_path = c["folder"].parent / c["new_name"]
+
+        if new_path.exists() and new_path.resolve() != c["folder"].resolve():
+            log(f"  [SKIP] Target already exists: {c['new_name']}")
+            c["status"] = "skipped — target exists"
+            continue
+
+        try:
+            shutil.move(str(c["folder"]), str(new_path))
+            c["status"] = "renamed"
+            renamed += 1
+        except Exception as e:
+            log(f"  [ERROR] {c['current']}: {e}")
+            c["status"] = f"error: {e}"
+            errors += 1
+
+    log(f"  Renamed: {renamed}  |  Skipped: {sum(1 for c in candidates if 'skipped' in c.get('status',''))}  |  Errors: {errors}")
+
+    report_path = write_report(candidates, REPORTS_FOLDER, dry_run=False)
+    if report_path:
+        log(f"  Report saved: {report_path}")
+
+    return {
+        "renamed":    renamed,
+        "pending":    0,
+        "skipped":    sum(1 for c in candidates if "skipped" in c.get("status", "")),
+        "errors":     errors,
+        "conflicts":  len(conflict_folders),
+        "results":    candidates,
+        "report_path": report_path,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLI ENTRY POINT  ← .cmd launchers call this; GUI does not
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    reports_dir = Path(REPORTS_FOLDER)
+    interactive_options([])
+
+    dry_run   = "--apply"  not in sys.argv
+    pick_dir  = "--pick"   in sys.argv
+    filter_ok = "--filter" in sys.argv
+
+    _path  = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
+                   if a == "--path"  and i+1 < len(sys.argv)), None)
+    _depth = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
+                   if a == "--depth" and i+1 < len(sys.argv)), None)
+    max_depth = int(_depth) if _depth and _depth.isdigit() else None
 
     # ── Determine folders to scan ──────────────────────────────────────────────
-    if PICK_DIR:
+    if _path:
+        roots = [Path(_path.strip('"'))]
+    elif pick_dir:
         roots = pick_folders()
         if not roots:
             print("\n  No folders selected. Exiting.\n")
             return
-    elif _path:
-        roots = [Path(_path.strip('"'))]
     else:
-        roots = [Path(DEFAULT_FOLDER)]
+        cfg = config_organized_folder()
+        if cfg:
+            roots = [cfg]
+        else:
+            print("ERROR: No folder specified. Use --pick or --path.")
+            sys.exit(1)
 
     for r in roots:
         if not r.exists() or not r.is_dir():
             print(f"ERROR: Folder not found: {r}")
             sys.exit(1)
 
-    # ── Header ─────────────────────────────────────────────────────────────────
-    mode = "DRY RUN — nothing will be renamed" if DRY_RUN else "LIVE — folders will be renamed"
+    mode = "DRY RUN — nothing will be renamed" if dry_run else "LIVE — folders will be renamed"
     print(f"\n{'='*65}")
-    print(f"Album Folder Renamer  v2.0")
+    print(f"Album Folder Renamer  v2.6")
     print(f"{'='*65}")
     print(f"  Mode      : {mode}")
     for r in roots:
         print(f"  Folder    : {r}")
-    if MAX_DEPTH:
-        print(f"  Depth     : {MAX_DEPTH} level(s) only")
-    if FILTER_OK:
+    if max_depth:
+        print(f"  Depth     : {max_depth} level(s) only")
+    if filter_ok:
         print(f"  Filter    : skipping already-correct folders")
     print(f"{'='*65}\n")
 
-    # ── Scan ───────────────────────────────────────────────────────────────────
     print("  Scanning...\n")
     candidates = []
     for root in roots:
-        candidates.extend(find_album_folders(root))
-    display_root = roots[0]
+        candidates.extend(find_album_folders(root, max_depth=max_depth, filter_ok=filter_ok))
 
     if not candidates:
-        if FILTER_OK:
+        if filter_ok:
             print("  All folders are already correctly named — nothing to do.\n")
         else:
             print("  No folders with music files found.\n")
@@ -486,26 +596,22 @@ def main():
     print(f"  No album tag       : {len(empty_folders)}")
     print()
 
-    # ── Warnings for empty ─────────────────────────────────────────────────────
     if empty_folders:
         print(f"  WARNING: {len(empty_folders)} folder(s) have no album tag — will be left unchanged:")
         for c in empty_folders:
             print(f"    {c['rel']}")
         print()
 
-    # ── Resolve conflicts ──────────────────────────────────────────────────────
+    # ── Resolve conflicts interactively ────────────────────────────────────────
     if conflict_folders:
         print(f"  {len(conflict_folders)} conflict(s) need your input:\n")
         for c in conflict_folders:
-            chosen = prompt_conflict(c["folder"], c["file_tags"])
+            chosen      = prompt_conflict(c["folder"], c["file_tags"])
             c["album"]  = chosen
             c["status"] = "resolved" if chosen else "skipped"
 
     # ── Cross-folder collision check ───────────────────────────────────────────
-    # Build a map of (parent_path, proposed_new_name) → list of candidates
-    # If two different folders would rename to the same name under the same parent,
-    # flag them before any renaming happens.
-    collision_map: dict[tuple, list] = {}
+    collision_map = {}
     for c in candidates:
         album = c.get("album")
         if not album or c["status"] not in ("ok", "resolved"):
@@ -527,13 +633,13 @@ def main():
                 c["status"] = "skipped — naming collision"
         print()
 
-    # ── Preview renames ────────────────────────────────────────────────────────
+    # ── Preview ────────────────────────────────────────────────────────────────
     to_rename = []
     for c in candidates:
         album = c.get("album")
         if not album or c["status"] not in ("ok", "resolved"):
             continue
-        new_name = sanitise_folder_name(album)
+        new_name      = sanitise_folder_name(album)
         c["new_name"] = new_name
         if new_name != c["current"]:
             to_rename.append(c)
@@ -546,7 +652,7 @@ def main():
         print("  All folders already match their album tags. Nothing to rename.\n")
     else:
         print(f"\n  {len(to_rename)} folder(s) to rename"
-              + (" (dry run):" if DRY_RUN else ":"))
+              + (" (dry run):" if dry_run else ":"))
         print()
         for c in to_rename:
             cd_note = f"  ← multi-CD ({len(c.get('cd_dirs', []))} discs)" if c.get("multi_cd") else ""
@@ -559,16 +665,15 @@ def main():
         print(f"  {len(already_correct)} folder(s) already named correctly — skipped.")
         print()
 
-    if DRY_RUN:
+    if dry_run:
         print(f"  Dry run complete. Run with --apply to rename.\n")
-        write_report(candidates, reports_dir, dry_run=True)
+        write_report(candidates, REPORTS_FOLDER, dry_run=True)
         return
 
     if not to_rename:
-        write_report(candidates, reports_dir, dry_run=False)
+        write_report(candidates, REPORTS_FOLDER, dry_run=False)
         return
 
-    # ── Confirm ────────────────────────────────────────────────────────────────
     confirm = input(f"  Rename {len(to_rename)} folder(s)? (y/n): ").strip().lower()
     while confirm not in ("y", "n"):
         confirm = input("  Please enter y or n: ").strip().lower()
@@ -583,15 +688,13 @@ def main():
     for c in to_rename:
         new_path = c["folder"].parent / c["new_name"]
 
-        # Same-parent collision check (safety net — cross-folder check above
-        # handles most cases, but an existing folder could also be in the way)
         if new_path.exists() and new_path.resolve() != c["folder"].resolve():
             print(f"  [SKIP] Target already exists: {c['new_name']}")
             c["status"] = "skipped — target exists"
             continue
 
         try:
-            c["folder"].rename(new_path)
+            shutil.move(str(c["folder"]), str(new_path))
             c["status"] = "renamed"
             renamed += 1
         except Exception as e:
@@ -604,7 +707,7 @@ def main():
     print(f"  Errors  : {errors}")
     print(f"  {'='*40}\n")
 
-    write_report(candidates, reports_dir, dry_run=False)
+    write_report(candidates, REPORTS_FOLDER, dry_run=False)
 
 
 if __name__ == "__main__":

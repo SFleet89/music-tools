@@ -2,7 +2,106 @@
 
 ---
 
+## v2.6 — 2026-05-25
+
+### Changed (PW-01 — GUI-callable function extraction)
+- Extracted `run_flac_to_cue()` as the GUI-callable core function. Parameters:
+  `target`, `apply`, `recursive`, `skip_existing_cue`, `forced_mbid`,
+  `reports_dir`, `confirm_callback`, `progress_callback`, `log_callback`.
+  Returns dict: `rows`, `counts`, `csv_path`, `log_path`, `report_path`, `reports_dir`.
+  Raises `ValueError` for bad paths instead of `sys.exit(1)`.
+- Moved `DRY_RUN`, `PICK_DIR`, `SCAN_MODE`, `_path_flag`, `_url_flag`, and
+  `interactive_options([])` inside `main()` — no module-level side effects on import.
+- `setup_output_paths(dry_run, reports_dir=None)` — removes global `DRY_RUN`
+  dependency; `reports_dir` can be overridden by the GUI.
+- `setup_logger(log_path, log_callback=None)` — adds a custom `logging.Handler`
+  that routes all INFO+ messages to the GUI callback. Clears stale handlers on
+  repeated calls (safe when run multiple times in the same process).
+- `process_audio()` — new params `dry_run=True` and `confirm_callback=None`.
+  `confirm_callback(cue_path) -> bool` replaces the inline `input()` call;
+  CLI `main()` passes its own lambda with y/n validation. When `confirm_callback`
+  is `None`, writes are auto-confirmed (GUI pre-confirms before calling).
+
+---
+
+## v2.5 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
 ## flac_to_cue.py
+
+### v2.4 — 2026-05-20
+
+#### Changed
+- `pick_folder()` is no longer defined locally — now imported from `music_tools_common`. The local duplicate has been removed. `pick_folder_or_file()` (unique to this script — handles audio file + folder picking) remains local.
+
+---
+
+### v2.3 — 2026-05-18
+
+#### Fixed
+- `reports_dir` was pointing to `SCRIPT_DIR.parent / "reports"` instead of `SCRIPT_DIR / "reports"`. Standalone script — fixed to save next to the script.
+- Stripped 7 null bytes of binary padding from end of file.
+
+---
+
+### v2.2 — 2026-05-17
+
+#### Added
+- `--url` flag: accepts a MusicBrainz release URL (e.g.
+  `https://musicbrainz.org/release/<uuid>`) and extracts the MBID directly.
+  When `--url` is provided the tag-reading and five-stage search fallback
+  chain are skipped entirely — the MBID is used straight away. Useful for
+  completely untagged WAV files where the MB release page is already known.
+  Supersedes the separate `mbz2cue.py` script; this implementation uses
+  the proper MusicBrainz JSON API instead of HTML scraping, and inherits
+  all existing features (dry-run, per-file confirmation, reports, multi-disc
+  support). Combine with `--path` or `--pick` to specify the audio file.
+
+---
+
+### v2.1 — 2026-05-16
+
+#### Fixed
+- Disc number detection for files whose name begins with a high track number
+  prefix (e.g. `18 - [Universal Religion Chapter 6].mp3` inside a `CD2` folder).
+  Previously step 3 (sequential file prefix) returned 18 as the disc number before
+  step 4 (parent folder keyword check) could fire. Since 18 > 2 (number of discs),
+  the script then fell back to disc 1 — the wrong disc.
+- Fix: parent folder check is now step 3, sequential prefix is now step 4 and is
+  additionally capped at ≤ 10 so that any track number above 10 can never be
+  mistaken for a disc number.
+- New priority order: scene prefix → keyword in filename → **parent folder keyword**
+  → sequential prefix (1 < n ≤ 10) → DISCNUMBER tag.
+
+---
+
+### v2.0 — 2026-05-16
+
+#### Added
+- Multi-format support: WAV, AIFF, MP3, M4A (AAC and Apple Lossless), and
+  Ogg Vorbis are now supported in addition to FLAC. `mutagen.File()` auto-detects
+  the format and routes tag reading through the correct handler:
+  VorbisComment for FLAC/OGG, ID3 frames for MP3/AIFF/WAV, MP4 atoms for M4A.
+- `audio_format` column added to CSV report (shows the file extension processed).
+- Dry-run mode is now the default. Running without `--apply` scans and resolves
+  MB matches but does not write any `.cue` files. Report status shows `dry_run`
+  for files that would have been written.
+- Two standard launcher `.cmd` files replace the old menu-driven shortcut:
+  - `Run - FLAC to CUE (Dry Run).cmd` — opens picker, runs in dry-run mode
+  - `Run - FLAC to CUE (Apply).cmd`  — opens picker, writes confirmed CUE files
+- File picker now includes all supported audio formats.
+
+#### Changed
+- Internal variables renamed from `flac_path`/`flac_filename` to
+  `audio_path`/`audio_filename` throughout the script and CSV report.
+- Version banner updated to v2.0.
+- `Run - FLAC to CUE.cmd` (old menu-style shortcut) replaced with a notice
+  pointing to the two new launchers.
+
+---
 
 ### v1.5 — 2026-04-25
 

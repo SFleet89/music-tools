@@ -2,6 +2,45 @@
 
 ---
 
+## v2.6 — 2026-05-24
+
+### Changed (pre-work PW-01: GUI-callable function extraction)
+- Extracted `run_rename_album_folders(folder, apply, filter_ok, max_depth, conflict_resolver, progress_callback, log_callback) -> dict` as the callable core function. GUI can call this directly.
+- `find_album_folders()` now takes `max_depth` and `filter_ok` as parameters instead of reading module-level variables.
+- `conflict_resolver` callback added: GUI passes its own dialog; CLI passes `prompt_conflict()`; if None, conflicts are flagged but skipped.
+- Moved module-level flag parsing inside `main()`.
+- `Path.rename()` replaced with `shutil.move()` throughout.
+- Fixed banner version (was incorrectly showing "v2.0" despite being v2.5).
+- `write_report()` now returns `Path|None`.
+- `run_rename_album_folders()` raises `ValueError` for bad folder.
+- Added `interactive_options([])` at top of `main()`.
+
+---
+
+## v2.5 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
+## v2.4 — 2026-05-22
+
+### Fixed
+- Removed hardcoded `DEFAULT_FOLDER` constant (`C:\Users\neo_s\Downloads\...`). Script now falls back to `config_organized_folder()` from `music_tools_common` when no `--path` or `--pick` is given.
+
+### Changed
+- Folder resolution order: `--path` → `--pick` dialog → `config_organized_folder()` from `music_config.json` → clear error message with usage hint.
+
+---
+
+## v2.3 — 2026-05-18
+
+### Fixed
+- `REPORTS_FOLDER` was a hardcoded absolute path. Added `SCRIPT_DIR = Path(__file__).parent` and changed `REPORTS_FOLDER` to `SCRIPT_DIR / "reports"`.
+- Truncation bug: file ended with `main(` missing its closing `)`. Restored.
+
+---
+
 ## v2.2 — 2026-03-19
 
 ### Fixed
@@ -31,18 +70,4 @@
 - Cross-folder collision detection before renaming — both folders skipped and warned if two would end up with the same name.
 
 ### Changed
-- Track titles now read alongside album tags in a single metadata pass.
-- Report includes New Name and Files count columns.
-
----
-
-## v1.0 — 2026-03-14
-
-### Added
-- Initial release.
-- Reads album tag and renames folder to match.
-- Conflict handling with prompt to choose or enter custom name.
-- `--pick`, `--path`, `--apply` flags.
-- Illegal character sanitisation for Windows folder names.
-- Same-parent collision check before renaming.
-- Final y/n confirmation prompt.
+- Track titles now read alongside album tags in a single metadata p

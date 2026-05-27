@@ -1,5 +1,5 @@
 """
-Playlist Repair Tool  v1.5
+Playlist Repair Tool  v1.8
 ===========================
 Scans .m3u playlist files and repairs broken paths by searching
 your music library for each track.
@@ -15,7 +15,8 @@ Auto-resolution: ambiguous matches are automatically resolved when:
     (prefers non-compilation albums)
   - Playlist filename implies an artist that narrows candidates to one
 
-Uses the metadata cache built by find_music_duplicates.py if available.
+Uses the shared SQLite cache (music_cache.db) built by build_fp_cache.py
+or find_music_duplicates.py if available.
 
 Workflow:
   Step 1 -- Dry run (default):
@@ -38,7 +39,7 @@ Workflow:
 Options:
   --playlists    Folder containing .m3u files (opens picker if omitted)
   --music        Root of your music library (opens picker if omitted)
-  --cache        Path to music_cache.json from find_music_duplicates.py
+  --cache        Path to music_cache.db (defaults to project root)
   --output-dir   Where to write repaired playlists (default: <playlists>/repaired)
   --apply        Write repaired playlists (default: dry run)
   --selections   Path to selections JSON (opens picker if omitted in apply mode)
@@ -51,9 +52,19 @@ import sys
 import re
 import csv
 import json
+import sqlite3
 import argparse
 from pathlib import Path
 from datetime import datetime
+
+# ── Shared project helpers ──────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from music_tools_common import DB_PATH, open_db
+    _COMMON_AVAILABLE = True
+except ImportError:
+    _COMMON_AVAILABLE = False
+    DB_PATH = None
 
 # ── Optional dependencies ───────────────────────────────────────────────────
 
@@ -101,7 +112,9 @@ COMPILATION_RE = re.compile(
     re.IGNORECASE,
 )
 SCRIPT_DIR    = Path(__file__).parent
-DEFAULT_CACHE = SCRIPT_DIR / "music_cache.json"
+# Default cache is the shared SQLite database in the project root.
+# Falls back to None if music_tools_common could not be imported.
+DEFAULT_CACHE = DB_PATH  # Path set by music_tools_common; None if unavailable
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -309,26 +322,33 @@ def normalize_path(path_str: str) -> str:
     return p
 
 def load_from_cache(cache_path: Path) -> list:
+    """Load library metadata from the shared SQLite cache (music_cache.db)."""
     print(f"  Loading cache: {cache_path}")
+    entries = []
+    seen = {}
     try:
-        raw = json.loads(cache_path.read_text(encoding="utf-8"))
+        conn = open_db(cache_path)
+        try:
+            rows = conn.execute(
+                "SELECT path_str, filename, title, artist, album "
+                "FROM metadata_cache"
+            ).fetchall()
+        finally:
+            conn.close()
     except Exception as e:
         print(f"  ERROR: Could not read cache: {e}")
         return []
-    seen = {}
-    entries = []
-    for entry in raw.values():
-        path_str = normalize_path(entry.get("path_str", ""))
+    for row in rows:
+        path_str = normalize_path(row["path_str"] or "")
         if not path_str or path_str in seen:
             continue
         seen[path_str] = True
-        meta = entry.get("metadata", {})
         entries.append({
             "path":     Path(path_str),
-            "filename": entry.get("filename", Path(path_str).name),
-            "title":    norm(meta.get("title", "")),
-            "artist":   norm(meta.get("artist", "")),
-            "album":    norm(meta.get("album", "")),
+            "filename": row["filename"] or Path(path_str).name,
+            "title":    norm(row["title"] or ""),
+            "artist":   norm(row["artist"] or ""),
+            "album":    norm(row["album"] or ""),
         })
     print(f"  Cache loaded: {len(entries)} unique files.")
     return entries
@@ -1749,10 +1769,152 @@ def write_missing_log(log_path: Path, all_results: dict) -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SELECTIONS JSON
+#  CORE LOGIC — SCAN  ← GUI calls this directly
 # ══════════════════════════════════════════════════════════════════════════════
 
-#  MAIN
+def run_repair_playlists_scan(
+    playlists_dir: Path,
+    music_dir: Path,
+    threshold: float = 85.0,
+    cache_path: Path = None,
+    reports_dir: Path = None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Scan .m3u playlists and match tracks against the music library.
+
+    Args:
+        playlists_dir:     Folder containing .m3u files.
+        music_dir:         Root of the music library.
+        threshold:         Fuzzy match score cutoff (0–100, default 85).
+        cache_path:        Path to music_cache.db; None = auto-detect or scan live.
+        reports_dir:       Where to save reports; defaults to <script folder>/reports.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: all_results, counts, methods, missing_entries, playlists (list),
+              entries (list), html_path (Path|None), csv_path (Path),
+              missing_path (Path), reports_dir (Path), timestamp (str)
+
+    Raises:
+        ValueError: if playlists_dir or music_dir don't exist, or no .m3u files found.
+    """
+    log = log_callback or print
+
+    if not playlists_dir.exists() or not playlists_dir.is_dir():
+        raise ValueError(f"Playlists folder not found: {playlists_dir}")
+    if not music_dir.exists() or not music_dir.is_dir():
+        raise ValueError(f"Music library folder not found: {music_dir}")
+
+    playlists = sorted(playlists_dir.glob("*.m3u"))
+    if not playlists:
+        raise ValueError(f"No .m3u files found in: {playlists_dir}")
+
+    if reports_dir is None:
+        reports_dir = SCRIPT_DIR / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # ── Build library index ──
+    resolved_cache = cache_path
+    if resolved_cache is None and DEFAULT_CACHE is not None:
+        resolved_cache = DEFAULT_CACHE
+
+    if resolved_cache is not None and Path(resolved_cache).exists():
+        entries = load_from_cache(resolved_cache)
+    else:
+        if resolved_cache is not None:
+            log(f"  Cache not found at: {resolved_cache}")
+        entries = scan_library(music_dir)
+
+    log("Building indexes...")
+    indexes = build_indexes(entries)
+    log(f"  artist+title : {len(indexes['artist_title'])} entries")
+    log(f"  title        : {len(indexes['title'])} entries")
+    log(f"  stem         : {len(indexes['stem'])} entries")
+
+    # ── Match all playlists ──
+    log("Matching playlist entries...")
+    all_results = match_all(playlists, indexes, threshold)
+
+    # ── Tally results ──
+    counts  = {"resolved": 0, "auto": 0, "ambiguous": 0, "missing": 0, "skip": 0}
+    methods = {}
+    for lines in all_results.values():
+        for line in lines:
+            s = line.get("status", "skip")
+            counts[s] = counts.get(s, 0) + 1
+            if line.get("match_method") and s != "skip":
+                m = line["match_method"]
+                methods[m] = methods.get(m, 0) + 1
+
+    # ── Write reports ──
+    csv_path     = reports_dir / f"playlist_repair_{timestamp}_dry.csv"
+    missing_path = reports_dir / f"playlist_missing_{timestamp}.txt"
+
+    write_csv_report(csv_path, all_results, "DRY RUN", timestamp, threshold)
+    log(f"  CSV report   : {csv_path}")
+
+    missing_entries = write_missing_log(missing_path, all_results)
+    log(f"  Missing log  : {missing_path}  ({len(missing_entries)} missing)")
+
+    html_path = None
+    if counts["ambiguous"] > 0 or counts["auto"] > 0 or missing_entries:
+        html = build_html_selector(all_results, missing_entries, entries)
+        html_path = reports_dir / f"playlist_selector_{timestamp}.html"
+        html_path.write_text(html, encoding="utf-8")
+        log(f"  HTML selector: {html_path}")
+
+    return {
+        "all_results":     all_results,
+        "counts":          counts,
+        "methods":         methods,
+        "missing_entries": missing_entries,
+        "playlists":       playlists,
+        "entries":         entries,
+        "html_path":       html_path,
+        "csv_path":        csv_path,
+        "missing_path":    missing_path,
+        "reports_dir":     reports_dir,
+        "timestamp":       timestamp,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC — APPLY  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_repair_playlists_apply(
+    all_results: dict,
+    output_dir: Path,
+    selections: dict = None,
+    reports_dir: Path = None,
+    log_callback=None,
+) -> dict:
+    """
+    Write repaired playlist files using previously matched all_results.
+
+    Args:
+        all_results:  The all_results dict from run_repair_playlists_scan().
+        output_dir:   Where to write the repaired .m3u files.
+        selections:   User selections keyed by item id (from playlist_selections.json).
+                      Pass {} or None to use auto-resolution only.
+        reports_dir:  Reserved for future use.
+        log_callback: Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: playlists, resolved, auto_resolved, manual_resolved, manual_path,
+              skipped, missing  (counts from write_repaired_playlists)
+    """
+    selections = selections or {}
+    return write_repaired_playlists(all_results, output_dir, selections)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLI ENTRY POINT  ← .cmd launchers call this; GUI does not
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
@@ -1771,30 +1933,17 @@ def main():
         print("  Select your MUSIC LIBRARY folder...")
         music_dir = pick_folder("Select your music library root folder")
 
-    if not playlists_dir.exists():
-        print(f"ERROR: Playlists folder not found: {playlists_dir}"); sys.exit(1)
-    if not music_dir.exists():
-        print(f"ERROR: Music folder not found: {music_dir}"); sys.exit(1)
-
-    playlists = sorted(playlists_dir.glob("*.m3u"))
-    if not playlists:
-        print(f"ERROR: No .m3u files found in: {playlists_dir}"); sys.exit(1)
-
     output_dir  = Path(args.output_dir) if args.output_dir else playlists_dir / "repaired"
     reports_dir = Path(args.reports_dir) if args.reports_dir else SCRIPT_DIR / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_label = "LIVE RUN" if args.apply else "DRY RUN"
-    run_slug  = "live" if args.apply else "dry"
+    cache_path  = Path(args.cache) if args.cache else None
 
     print()
     print("=" * 65)
-    print(f"Playlist Repair Tool  [{run_label}]")
+    print(f"Playlist Repair Tool  v1.8  [{'LIVE RUN' if args.apply else 'DRY RUN'}]")
     if not args.apply:
         print("*** DRY RUN: No playlists will be written ***")
     print(f"Started       : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Playlists     : {playlists_dir}  ({len(playlists)} .m3u files)")
+    print(f"Playlists     : {playlists_dir}")
     print(f"Music library : {music_dir}")
     print(f"Fuzzy match   : {'rapidfuzz' if FUZZY_AVAILABLE else 'difflib'}  threshold={args.threshold}")
     print(f"Reports       : {reports_dir}")
@@ -1803,129 +1952,65 @@ def main():
     print("=" * 65)
     print()
 
-    # ── Build library index ──
-    cache_path = Path(args.cache) if args.cache else DEFAULT_CACHE
-    entries    = load_from_cache(cache_path) if cache_path.exists() else scan_library(music_dir)
+    try:
+        scan_result = run_repair_playlists_scan(
+            playlists_dir  = playlists_dir,
+            music_dir      = music_dir,
+            threshold      = args.threshold,
+            cache_path     = cache_path,
+            reports_dir    = reports_dir,
+        )
+    except ValueError as e:
+        print(f"  ERROR: {e}")
+        sys.exit(1)
 
+    counts = scan_result["counts"]
     print()
-    print("Building indexes...")
-    indexes = build_indexes(entries)
-    print(f"  artist+title : {len(indexes['artist_title'])} entries")
-    print(f"  title        : {len(indexes['title'])} entries")
-    print(f"  stem         : {len(indexes['stem'])} entries")
-    print()
+    print("Scan complete:")
+    print(f"  Resolved   : {counts.get('resolved', 0)}")
+    print(f"  Auto-match : {counts.get('auto', 0)}")
+    print(f"  Ambiguous  : {counts.get('ambiguous', 0)}")
+    print(f"  Missing    : {counts.get('missing', 0)}")
+    print(f"  Skipped    : {counts.get('skip', 0)}")
+    print(f"  CSV report : {scan_result['csv_path']}")
+    if scan_result.get('missing_path'):
+        print(f"  Missing log: {scan_result['missing_path']}")
+    if scan_result.get('html_path'):
+        print(f"  HTML selector: {scan_result['html_path']}")
 
-    # ── Match all playlists ──
-    print("Matching playlist entries...")
-    all_results = match_all(playlists, indexes, args.threshold)
-    print()
-
-    # ── Tally results ──
-    counts  = {"resolved": 0, "auto": 0, "ambiguous": 0, "missing": 0, "skip": 0}
-    methods = {}
-    for lines in all_results.values():
-        for line in lines:
-            s = line.get("status", "skip")
-            counts[s] = counts.get(s, 0) + 1
-            if line.get("match_method") and s != "skip":
-                m = line["match_method"]
-                methods[m] = methods.get(m, 0) + 1
-
-    print(f"  Resolved (1 match)       : {counts['resolved']}")
-    print(f"  Auto-resolved            : {counts['auto']}")
-    print(f"  Ambiguous (needs review) : {counts['ambiguous']}")
-    print(f"  Missing                  : {counts['missing']}")
-    print()
-    print("  Match methods:")
-    for method, count in sorted(methods.items(), key=lambda x: -x[1]):
-        print(f"    {count:>5}  {method}")
-    print()
-
-    # ── Write reports ──
-    csv_path      = reports_dir / f"playlist_repair_{timestamp}_{run_slug}.csv"
-    selector_path = reports_dir / f"playlist_selector_{timestamp}.html"
-    missing_path  = reports_dir / f"playlist_missing_{timestamp}.txt"
-
-    write_csv_report(csv_path, all_results, run_label, timestamp, args.threshold)
-    print(f"  CSV report   : {csv_path}")
-
-    missing_entries = write_missing_log(missing_path, all_results)
-    print(f"  Missing log  : {missing_path}  ({len(missing_entries)} missing)")
-
-    if counts["ambiguous"] > 0 or counts["auto"] > 0 or missing_entries:
-        html = build_html_selector(all_results, missing_entries, entries)
-        selector_path.write_text(html, encoding="utf-8")
-        print(f"  HTML selector: {selector_path}")
-        print(f"    To Review   : {counts['ambiguous']}")
-        print(f"    Auto-selected: {counts['auto']}")
-        print(f"    Missing      : {len(missing_entries)}")
-    else:
-        print("  All entries resolved — no selector needed.")
-    print()
-
-    # ── Apply mode ──
-    if args.apply:
-        selections = {}
-        if args.selections:
-            selections = load_selections(args.selections)
-        elif counts["ambiguous"] > 0 or counts["auto"] > 0:
-            print("  Select your playlist_selections.json...")
-            sel_path   = pick_file(
-                "Select playlist_selections.json",
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-                initial=str(reports_dir),
-            )
-            selections = load_selections(str(sel_path))
-
-        print(f"\n  About to write {len(playlists)} repaired playlist(s) to:")
-        print(f"  {output_dir}")
+    if not args.apply:
         print()
-        confirm = input("  Proceed? (y/n): ").strip().lower()
-        while confirm not in ("y", "n"):
-            confirm = input("  Please enter y or n: ").strip().lower()
-        if confirm != "y":
-            print("  Aborted.")
-            input("  Press Enter to close...")
-            return
+        print("  DRY RUN complete. No playlists written.")
+        print("  If ambiguous matches exist, open the HTML selector, download")
+        print("  selections.json, then re-run with --apply --selections <path>.")
+        return
 
+    # ── Apply: write repaired playlists ────────────────────────────────────
+    selections = {}
+    if args.selections:
+        selections = load_selections(args.selections)
+    elif scan_result["counts"].get("ambiguous", 0) > 0:
         print()
-        ws = write_repaired_playlists(all_results, output_dir, selections)
+        print("  Ambiguous matches found. Optionally provide --selections <path>")
+        print("  to apply manual choices; continuing with auto-resolution only.")
 
-        print()
-        print("=" * 65)
-        print(f"SUMMARY  [{run_label}]")
-        print(f"  Playlists written         : {ws['playlists']}")
-        print(f"  Resolved (single match)   : {ws['resolved']}")
-        print(f"  Resolved (auto-selected)  : {ws['auto_resolved']}")
-        print(f"  Resolved (manual pick)    : {ws['manual_resolved']}")
-        print(f"  Kept unresolved           : {ws['skipped']}")
-        print(f"  Missing from library      : {ws['missing']}")
-        print(f"  Reports saved to          : {reports_dir}")
-        print(f"  Repaired playlists        : {output_dir}")
-        print("=" * 65)
-
-    else:
-        print("=" * 65)
-        print("SUMMARY  [DRY RUN]")
-        print(f"  Playlists scanned         : {len(playlists)}")
-        print(f"  Resolved (single match)   : {counts['resolved']}")
-        print(f"  Auto-resolved             : {counts['auto']}")
-        print(f"  Needs manual review       : {counts['ambiguous']}")
-        print(f"  Missing                   : {counts['missing']}")
-        print(f"  Reports saved to          : {reports_dir}")
-        print()
-        if counts["ambiguous"] > 0 or counts["auto"] > 0:
-            print(f"  Next steps:")
-            print(f"  1. Open playlist_selector_{timestamp}.html in your browser")
-            print(f"  2. Check Auto-selected tab, review To Review tab")
-            print(f"  3. Download selections.json to the reports folder")
-            print(f"  4. Run repair_playlists_apply.cmd")
-        else:
-            print("  Run repair_playlists_apply.cmd to write the repaired playlists.")
-        print("=" * 65)
+    apply_result = run_repair_playlists_apply(
+        all_results  = scan_result["all_results"],
+        output_dir   = output_dir,
+        selections   = selections,
+        reports_dir  = reports_dir,
+    )
 
     print()
-    input("  Press Enter to close...")
+    print("Apply complete:")
+    print(f"  Playlists written   : {apply_result.get('playlists', 0)}")
+    print(f"  Auto-resolved       : {apply_result.get('auto_resolved', 0)}")
+    print(f"  Manual-resolved     : {apply_result.get('manual_resolved', 0)}")
+    print(f"  Manual path entries : {apply_result.get('manual_path', 0)}")
+    print(f"  Still missing       : {apply_result.get('missing', 0)}")
+    print(f"  Skipped/unresolved  : {apply_result.get('skipped', 0)}")
+    print(f"  Output folder       : {output_dir}")
+    print()
 
 
 if __name__ == "__main__":

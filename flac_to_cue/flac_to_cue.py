@@ -1,10 +1,12 @@
 """
-FLAC to CUE  v1.5
+Audio to CUE  v2.6
 ==================
-Generates a CUE sheet for a FLAC file using MusicBrainz data.
+Generates a CUE sheet for an audio file using MusicBrainz data.
 
-Reads the MusicBrainz Release ID (MBID) from the FLAC file's tags, fetches
-the tracklist from the MusicBrainz API, and writes a CUE sheet ready to use
+Supports: FLAC, WAV, AIFF, MP3, M4A (AAC and Apple Lossless), Ogg Vorbis.
+
+Reads the MusicBrainz Release ID (MBID) from the file's tags, fetches the
+tracklist from the MusicBrainz API, and writes a CUE sheet ready to use
 with CUETools for splitting.
 
 If no MBID tag is found, falls back through a chain of search strategies:
@@ -15,27 +17,91 @@ If no MBID tag is found, falls back through a chain of search strategies:
   5. Artist + title parsed from filename -> artist+album search
 
 Supports multi-disc releases -- generates one CUE per disc, matched to the
-correct FLAC file automatically.
+correct audio file automatically.
 
 Requirements:
     pip install mutagen requests
 
 Usage:
-    python flac_to_cue.py                           # folder picker
-    python flac_to_cue.py "C:\\path\\to\\folder"    # all FLACs in folder
-    python flac_to_cue.py "C:\\path\\to\\file.flac" # single file
-    python flac_to_cue.py --scan                    # folder picker, then recursive scan
-    python flac_to_cue.py --scan "C:\\path\\to\\Music"  # scan specific root
+    python flac_to_cue.py                              # folder/file picker
+    python flac_to_cue.py --pick                       # folder/file picker
+    python flac_to_cue.py --pick --apply               # pick, then write CUEs
+    python flac_to_cue.py --path "C:\\path\\to\\folder"  # all audio in folder
+    python flac_to_cue.py --path "C:\\path\\to\\file.flac" --apply
+    python flac_to_cue.py --scan                       # folder picker, recursive
+    python flac_to_cue.py --scan --apply               # scan and write CUEs
+    python flac_to_cue.py --url "https://musicbrainz.org/release/<id>" --pick
+    python flac_to_cue.py --url "https://musicbrainz.org/release/<id>" --path "CD1.wav" --apply
+
+--url flag:
+    Provide a MusicBrainz release URL directly. The MBID is extracted from
+    the URL and used immediately -- the tag-reading and search fallback chain
+    are skipped entirely. Useful for untagged WAV files where you already
+    know the MB release page.
+
+    Combine with --path (single file or folder) or --pick (file/folder dialog).
+    For multi-disc releases, point --path at the folder containing CD1.wav,
+    CD2.wav etc. -- each file will be matched to its disc within the release.
+
+Mode:
+    Default (no --apply): DRY RUN — scans and resolves MB matches but does
+        not write any .cue files. Shows what would be created.
+    With --apply: resolves MB matches, shows CUE preview, asks confirmation
+        per file, then writes.
 
 Output:
-    A .cue file written next to each FLAC file:
+    A .cue file written next to each audio file (in --apply mode):
     CD1.flac  ->  CD1.cue
-    CD2.flac  ->  CD2.cue
+    CD1.wav   ->  CD1.cue
 
-    FLAC files that already have a matching .cue are skipped automatically.
+    Audio files that already have a matching .cue are skipped automatically.
 
-    Reports saved to: <script folder>\\reports\\flac_to_cue_YYYYMMDD_HHMMSS.csv
-    Logs saved to:    <script folder>\\reports\\flac_to_cue_YYYYMMDD_HHMMSS.log
+    Reports saved to: <script folder>\\..\\reports\\flac_to_cue_YYYYMMDD_HHMMSS.csv
+    Logs saved to:    <script folder>\\..\\reports\\flac_to_cue_YYYYMMDD_HHMMSS.log
+
+Changes in v2.6:
+    - PW-01: Extracted run_flac_to_cue() as GUI-callable core function.
+      Takes target, apply, recursive, skip_existing_cue, forced_mbid,
+      reports_dir, confirm_callback, progress_callback, log_callback.
+      Raises ValueError for bad paths instead of sys.exit(1).
+      Returns dict: rows, counts, csv_path, log_path, report_path, reports_dir.
+    - Moved module-level DRY_RUN, PICK_DIR, SCAN_MODE, _path_flag, _url_flag
+      and interactive_options([]) inside main() — no module-level side effects.
+    - setup_output_paths() now takes dry_run and optional reports_dir params
+      (removes global DRY_RUN dependency).
+    - setup_logger() now accepts optional log_callback — routes all log messages
+      to the GUI via a custom logging.Handler (no double-routing).
+    - process_audio() now takes dry_run=True and confirm_callback=None params;
+      confirm_callback(cue_path) -> bool replaces the inline input() call so
+      the GUI can supply a dialog. CLI main() passes its own lambda.
+      When confirm_callback is None, writes are auto-confirmed (GUI pre-confirms).
+
+Changes in v2.2:
+    - Added --url flag: accepts a MusicBrainz release URL and extracts the
+      MBID directly, bypassing the tag-reading and search fallback chain.
+      Intended for untagged WAV files where the MB release page is known.
+      Supersedes the separate mbz2cue.py script (which used HTML scraping);
+      this implementation uses the proper MB JSON API.
+
+Changes in v2.1:
+    - Fixed disc number detection for files whose name begins with a high track
+      number (e.g. "18 - Title.mp3" inside a CD2 folder). Previously the
+      sequential prefix check (step 3) returned 18 as the disc number before the
+      parent folder check (step 4) could return the correct value of 2. The
+      priority order is now: scene prefix → keyword in filename → parent folder
+      keyword → sequential prefix (capped at ≤ 10) → DISCNUMBER tag.
+
+Changes in v2.0:
+    - Added support for WAV, AIFF, MP3, M4A (AAC and Apple Lossless), and
+      Ogg Vorbis in addition to FLAC. mutagen.File() now auto-detects the
+      format and routes tag reading through format-appropriate logic
+      (VorbisComment for FLAC/OGG, ID3 for MP3/AIFF/WAV, MP4 tags for M4A).
+    - Added audio_format column to CSV report.
+    - Added dry-run mode (default). Pass --apply to write CUE files.
+    - Replaced combined menu .cmd with two standard .cmd launchers:
+      "Run - FLAC to CUE (Dry Run).cmd" and "Run - FLAC to CUE (Apply).cmd".
+    - Internal variables renamed from flac_* to audio_* for clarity.
+    - File picker now includes all supported audio formats.
 
 Changes in v1.5:
     - Fixed disc number detection: filename is now checked BEFORE the
@@ -52,30 +118,25 @@ Changes in v1.4:
       hours correctly (e.g. 63:54 becomes 01:03:54) so CUE Splitter can
       parse split points on releases over ~99 minutes.
     - Added disc track count sanity check: warns and prompts to continue
-      if the matched disc has an unexpected number of tracks (catches wrong
-      MB release being selected).
-    - CUE preview now shows total duration so you can spot obvious mismatches
-      before confirming.
+      if the matched disc has an unexpected number of tracks.
+    - CUE preview now shows total duration so you can spot obvious mismatches.
 
 Changes in v1.3:
-    - Added filename parsing as fallback strategies 4 and 5:
-        4. Extract ANJ*/ANJCD* catno from filename -> catno search
-        5. Extract artist + title from filename -> artist+album search
-      Fixes 0% match rate for untagged FLAC files with informative filenames.
+    - Added filename parsing as fallback strategies 4 and 5.
     - Fixed log message bug: search strings now accurately reflect what is
       actually being sent to the MB API.
-    - parse_filename() strips scene tags (WEB, FLAC, CD1, TT, FOX etc.),
-      track number prefixes, and disc suffixes before searching.
+    - parse_filename() strips scene tags, track number prefixes, and disc
+      suffixes before searching.
 
 Changes in v1.2:
-    - Added CSV report saved after every run (one row per FLAC processed).
+    - Added CSV report saved after every run (one row per file processed).
     - Added log file capturing all console output for later review.
     - Both report and log saved to shared tools\\reports\\ folder.
-    - process_flac() now returns a result dict instead of a bare bool.
+    - process_audio() now returns a result dict instead of a bare bool.
 
 Changes in v1.1:
     - Added --scan flag with folder picker for recursive scanning.
-    - FLACs that already have a .cue are skipped automatically.
+    - Files that already have a .cue are skipped automatically.
 
 Changes in v1.0:
     - Initial release.
@@ -92,9 +153,15 @@ import urllib.parse
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import pick_folder
+from music_tools_common import interactive_options
+
 # ── Optional mutagen ───────────────────────────────────────────────────────────
 try:
-    from mutagen.flac import FLAC
+    import mutagen
+    from mutagen.id3 import ID3
+    from mutagen.mp4 import MP4Tags
     MUTAGEN_OK = True
 except ImportError:
     MUTAGEN_OK = False
@@ -103,7 +170,7 @@ except ImportError:
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 MB_API      = "https://musicbrainz.org/ws/2"
-USER_AGENT  = "flac_to_cue/1.2 ( https://github.com/neo_s )"
+USER_AGENT  = "flac_to_cue/2.1 ( https://github.com/neo_s )"
 RATE_LIMIT  = 1.1
 _last_call  = 0.0
 
@@ -111,8 +178,17 @@ SCRIPT_DIR  = Path(__file__).parent
 
 _ILLEGAL_RE = re.compile(r'[\\/:*?"<>|]')
 
+# MusicBrainz release UUID pattern (used to extract MBID from a URL)
+_MBID_RE = re.compile(
+    r'/release/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
+    re.IGNORECASE,
+)
+
+# Supported audio formats (extensions without the dot)
+AUDIO_EXTENSIONS = {".flac", ".wav", ".aiff", ".aif", ".mp3", ".m4a", ".ogg"}
+
 REPORT_FIELDS = [
-    "flac_path", "flac_filename", "disc_number",
+    "audio_path", "audio_filename", "audio_format", "disc_number",
     "mbid", "mbid_source", "album", "artist",
     "track_count", "cue_path", "status", "notes",
 ]
@@ -120,20 +196,25 @@ REPORT_FIELDS = [
 
 # ── Logging / reporting setup ──────────────────────────────────────────────────
 
-def setup_output_paths():
+def setup_output_paths(dry_run, reports_dir=None):
     """Create reports dir and return (csv_path, log_path) for this run."""
-    reports_dir = SCRIPT_DIR.parent / "reports"
-    reports_dir.mkdir(exist_ok=True)
+    if reports_dir is None:
+        reports_dir = SCRIPT_DIR / "reports"
+    reports_dir = Path(reports_dir)
+    reports_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path  = reports_dir / ("flac_to_cue_%s.csv" % timestamp)
-    log_path  = reports_dir / ("flac_to_cue_%s.log" % timestamp)
+    suffix    = "dry" if dry_run else "applied"
+    csv_path  = reports_dir / ("flac_to_cue_%s_%s.csv" % (suffix, timestamp))
+    log_path  = reports_dir / ("flac_to_cue_%s_%s.log" % (suffix, timestamp))
     return csv_path, log_path
 
 
-def setup_logger(log_path):
-    """Set up logging to both console and log file."""
+def setup_logger(log_path, log_callback=None):
+    """Set up logging to console, log file, and optional GUI callback."""
     logger = logging.getLogger("flac_to_cue")
     logger.setLevel(logging.DEBUG)
+    # Clear any handlers from a previous run (important when called from GUI)
+    logger.handlers.clear()
 
     fmt = logging.Formatter("%(asctime)s  %(levelname)-7s  %(message)s",
                             datefmt="%H:%M:%S")
@@ -150,6 +231,20 @@ def setup_logger(log_path):
 
     logger.addHandler(fh)
     logger.addHandler(ch)
+
+    # GUI callback handler — routes INFO+ messages to the caller
+    if log_callback:
+        class _CallbackHandler(logging.Handler):
+            def emit(self, record):
+                try:
+                    log_callback(self.format(record))
+                except Exception:
+                    pass
+        cbh = _CallbackHandler()
+        cbh.setLevel(logging.INFO)
+        cbh.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(cbh)
+
     return logger
 
 
@@ -196,23 +291,116 @@ def search_release_by_artist_album(artist, album):
     return data.get("releases", [])
 
 
-# ── FLAC tag reading ───────────────────────────────────────────────────────────
+# ── Audio tag reading ──────────────────────────────────────────────────────────
 
-def read_flac_tags(flac_path):
+# ID3 frame ID map (MP3, AIFF, WAV-with-ID3)
+_ID3_MAP = {
+    "MUSICBRAINZ_ALBUMID": ["TXXX:MusicBrainz Album Id",
+                            "TXXX:MUSICBRAINZ ALBUM ID"],
+    "MBID":                ["TXXX:MusicBrainz Album Id"],
+    "CATALOGNUMBER":       ["TXXX:CATALOGNUMBER", "TXXX:CatalogNumber"],
+    "CATALOG":             ["TXXX:CATALOG"],
+    "ALBUMARTIST":         ["TPE2"],
+    "ARTIST":              ["TPE1"],
+    "ALBUM":               ["TALB"],
+    "DISCNUMBER":          ["TPOS"],   # often "disc/total"
+    "TOTALDISCS":          ["TPOS"],
+    "DISCTOTAL":           ["TPOS"],
+}
+
+# MP4 atom map (M4A — AAC and Apple Lossless share the same container)
+_MP4_MAP = {
+    "MUSICBRAINZ_ALBUMID": [
+        "----:com.apple.iTunes:MusicBrainz Album Id",
+        "----:com.apple.iTunes:MUSICBRAINZ_ALBUMID",
+    ],
+    "MBID":          ["----:com.apple.iTunes:MusicBrainz Album Id"],
+    "CATALOGNUMBER": ["----:com.apple.iTunes:CATALOGNUMBER",
+                      "----:com.apple.iTunes:CatalogNumber"],
+    "CATALOG":       ["----:com.apple.iTunes:CATALOG"],
+    "ALBUMARTIST":   ["aART"],
+    "ARTIST":        ["\xa9ART"],   # ©ART
+    "ALBUM":         ["\xa9alb"],   # ©alb
+    "DISCNUMBER":    ["disk"],      # tuple (discnum, totaldiscs)
+    "TOTALDISCS":    ["disk"],
+    "DISCTOTAL":     ["disk"],
+}
+
+
+def read_audio_tags(audio_path):
     """
-    Read useful tags from a FLAC file.
-    Returns a dict with keys: mbid, catno, artist, album, discnumber, totaldiscs
-    All values may be None if not present.
+    Read useful tags from an audio file using mutagen's format auto-detection.
+
+    Handles:
+      - FLAC, Ogg Vorbis  → VorbisComment (dict-like, uppercase keys)
+      - MP3, AIFF, WAV    → ID3 frames
+      - M4A (AAC / ALAC)  → MP4 atoms
+
+    Returns a dict with keys: mbid, catno, artist, album, discnumber, totaldiscs.
+    All values may be None if not present or the format has no embedded tags.
     """
     try:
-        audio = FLAC(str(flac_path))
+        audio = mutagen.File(str(audio_path))
     except Exception as e:
-        print("  ! Could not read tags from %s: %s" % (flac_path.name, e))
+        print("  ! Could not read tags from %s: %s" % (audio_path.name, e))
         return {}
 
-    def get(key):
-        val = audio.tags.get(key.upper()) or audio.tags.get(key.lower())
-        return val[0].strip() if val else None
+    if audio is None or audio.tags is None:
+        # Format not recognised, or file has no embedded tags at all —
+        # fall back to filename parsing (handled by resolve_mbid).
+        return {}
+
+    tags = audio.tags
+
+    # ── Build a format-appropriate tag getter ──────────────────────────────────
+
+    if isinstance(tags, ID3):
+        # MP3, AIFF, WAV-with-ID3
+        def get(key):
+            for frame_id in _ID3_MAP.get(key.upper(), []):
+                frame = tags.get(frame_id)
+                if frame is None:
+                    continue
+                text = (frame.text[0] if hasattr(frame, "text") and frame.text
+                        else str(frame))
+                text = str(text).strip()
+                if not text:
+                    continue
+                # TPOS carries "disc/total" — split accordingly
+                if "/" in text:
+                    if key.upper() in ("TOTALDISCS", "DISCTOTAL"):
+                        text = text.split("/", 1)[1]
+                    else:
+                        text = text.split("/", 1)[0]
+                return text or None
+            return None
+
+    elif isinstance(tags, MP4Tags):
+        # M4A (AAC and Apple Lossless share the same container format)
+        def get(key):
+            for atom_key in _MP4_MAP.get(key.upper(), []):
+                val = tags.get(atom_key)
+                if val is None:
+                    continue
+                v = val[0] if isinstance(val, (list, tuple)) and val else val
+                # disk atom returns a (discnum, totaldiscs) tuple
+                if atom_key == "disk" and isinstance(v, tuple):
+                    if key.upper() in ("TOTALDISCS", "DISCTOTAL"):
+                        return str(v[1]) if len(v) > 1 and v[1] else None
+                    return str(v[0]) if v[0] else None
+                # Freeform atoms (----:...) return MP4FreeForm (bytes-like)
+                if hasattr(v, "decode"):
+                    return v.decode("utf-8", errors="replace").strip() or None
+                return str(v).strip() or None
+            return None
+
+    else:
+        # VorbisComment (FLAC, Ogg Vorbis) and other dict-like tag containers
+        def get(key):
+            val = tags.get(key.upper()) or tags.get(key.lower())
+            return val[0].strip() if val else None
+
+    # ── Extract fields (format-independent from here) ──────────────────────────
 
     raw_album = get("ALBUM")
     raw_catno = get("CATALOGNUMBER") or get("CATALOG")
@@ -256,13 +444,13 @@ _SCENE_DISC_RE = re.compile(r'^(\d)\d{2}[-_]')
 _SEQ_PREFIX_RE = re.compile(r'^0*([1-9]\d*)[\.\s]')
 
 
-def guess_disc_number(tags, flac_path):
+def guess_disc_number(tags, audio_path):
     """
-    Determine which disc number a FLAC file represents.
+    Determine which disc number an audio file represents.
     Priority: filename (most reliable) → DISCNUMBER tag (often wrong in scene rips).
     Returns int or None.
     """
-    stem = flac_path.stem
+    stem = audio_path.stem
 
     # 1. Scene format: 201-artist-title → disc 2
     m = _SCENE_DISC_RE.match(stem)
@@ -274,16 +462,22 @@ def guess_disc_number(tags, flac_path):
     if m:
         return int(m.group(1))
 
-    # 3. Sequential file prefix: "02. Title" → disc 2
-    #    Only use if value > 1 to avoid misidentifying track 01 as disc 1
-    m = _SEQ_PREFIX_RE.match(stem)
-    if m and int(m.group(1)) > 1:
-        return int(m.group(1))
-
-    # 4. Parent folder name: "CD2" or "Disc 2" in folder
-    m = _DISC_RE.search(flac_path.parent.name)
+    # 3. Parent folder name: "CD2" or "Disc 2" in folder
+    #    Checked before the sequential prefix so that files named "18 - Title"
+    #    (track number prefix) inside a "CD2" folder are correctly identified
+    #    as disc 2 rather than disc 18.
+    m = _DISC_RE.search(audio_path.parent.name)
     if m:
         return int(m.group(1))
+
+    # 4. Sequential file prefix: "02. Title" → disc 2
+    #    Only use if value is > 1 (avoids misidentifying track 01 as disc 1)
+    #    and <= 10 (avoids misidentifying high track numbers like 18 as disc 18).
+    m = _SEQ_PREFIX_RE.match(stem)
+    if m:
+        n = int(m.group(1))
+        if 1 < n <= 10:
+            return n
 
     # 5. DISCNUMBER tag — last resort, often incorrect in scene rips
     dn = tags.get("discnumber")
@@ -341,17 +535,17 @@ def sanitise_filename(name):
     return _ILLEGAL_RE.sub("", name).strip(" .")
 
 
-def build_cue(disc_tracks, flac_filename, album_title, album_artist):
+def build_cue(disc_tracks, audio_filename, album_title, album_artist):
     """
     Build CUE sheet content for one disc.
 
-    disc_tracks: list of MB recording dicts for this disc
-    flac_filename: just the filename (e.g. CD1.flac)
+    disc_tracks:    list of MB recording dicts for this disc
+    audio_filename: just the filename (e.g. CD1.flac or CD1.wav)
     """
     lines = []
     lines.append('PERFORMER "%s"' % album_artist)
     lines.append('TITLE "%s"'     % album_title)
-    lines.append('FILE "%s" WAVE' % flac_filename)
+    lines.append('FILE "%s" WAVE' % audio_filename)
     lines.append("")
 
     cumulative_ms = 0
@@ -382,23 +576,29 @@ def build_cue(disc_tracks, flac_filename, album_title, album_artist):
 
 # ── Main logic ─────────────────────────────────────────────────────────────────
 
-def find_flac_files(path, recursive=False, skip_existing_cue=False):
+def find_audio_files(path, recursive=False, skip_existing_cue=False):
     """
-    Return list of FLAC files to process.
+    Return list of supported audio files to process.
 
-    path            : a file or folder path
-    recursive       : if True, scan all subfolders
-    skip_existing_cue: if True, skip FLACs that already have a .cue next to them
+    path              : a file or folder path
+    recursive         : if True, scan all subfolders
+    skip_existing_cue : if True, skip files that already have a .cue next to them
     """
     p = Path(path)
 
-    if p.is_file() and p.suffix.lower() == ".flac":
+    if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
         candidates = [p]
     elif p.is_dir():
         if recursive:
-            candidates = sorted(p.rglob("*.flac"))
+            candidates = sorted(
+                f for f in p.rglob("*")
+                if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+            )
         else:
-            candidates = sorted(p.glob("*.flac"))
+            candidates = sorted(
+                f for f in p.glob("*")
+                if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+            )
     else:
         return []
 
@@ -411,28 +611,14 @@ def find_flac_files(path, recursive=False, skip_existing_cue=False):
             else:
                 filtered.append(f)
         if skipped:
-            print("  ~ Skipping %d FLAC file(s) that already have a .cue" % skipped)
+            print("  ~ Skipping %d audio file(s) that already have a .cue" % skipped)
         return filtered
 
     return candidates
 
 
-def pick_folder(title="Select folder"):
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        chosen = filedialog.askdirectory(title=title)
-        root.destroy()
-        return chosen or None
-    except Exception as e:
-        print("ERROR: Could not open folder picker: %s" % e)
-        return None
-
-
 def pick_folder_or_file():
+    """Open a picker for a single audio file (any supported format) or a folder."""
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -440,12 +626,21 @@ def pick_folder_or_file():
         root.withdraw()
         root.attributes("-topmost", True)
         chosen = filedialog.askopenfilename(
-            title="Select FLAC file (or cancel to pick a folder)",
-            filetypes=[("FLAC files", "*.flac"), ("All files", "*.*")],
+            title="Select audio file (or cancel to pick a folder)",
+            filetypes=[
+                ("Audio files",
+                 "*.flac *.wav *.aiff *.aif *.mp3 *.m4a *.ogg"),
+                ("FLAC files",  "*.flac"),
+                ("WAV files",   "*.wav *.aiff *.aif"),
+                ("MP3 files",   "*.mp3"),
+                ("M4A files",   "*.m4a"),
+                ("Ogg files",   "*.ogg"),
+                ("All files",   "*.*"),
+            ],
         )
         if not chosen:
             chosen = filedialog.askdirectory(
-                title="Select folder containing FLAC files",
+                title="Select folder containing audio files",
             )
         root.destroy()
         return chosen or None
@@ -479,18 +674,18 @@ _DISC_SUFFIX_RE = re.compile(
 )
 
 
-def parse_filename(flac_path):
+def parse_filename(audio_path):
     """
-    Extract (catno, artist, title) from a FLAC filename.
+    Extract (catno, artist, title) from an audio filename.
     Any value may be None if not parseable.
 
     Handles formats like:
       101-va-anjunabeats_volume_5__mixed_by_above_and_beyond-cd1-tt.flac
-      Above & Beyond - Anjunabeats Volume Six CD1.flac
-      01. VA - Anjunabeats Worldwide 02 (Continuous Mix by Super8 & Tab).flac
-      ANJCD008 VA - Anjunabeats Volume 5.flac
+      Above & Beyond - Anjunabeats Volume Six CD1.wav
+      01. VA - Anjunabeats Worldwide 02 (Continuous Mix by Super8 & Tab).mp3
+      ANJCD008 VA - Anjunabeats Volume 5.m4a
     """
-    stem = flac_path.stem
+    stem = audio_path.stem
 
     # Extract catno if present
     catno_match = _CATNO_RE.search(stem)
@@ -525,7 +720,21 @@ def parse_filename(flac_path):
 
 # ── MBID resolution ────────────────────────────────────────────────────────────
 
-def resolve_mbid(tags, flac_path, log):
+def extract_mbid_from_url(url):
+    """
+    Extract a MusicBrainz Release MBID (UUID) from a MB release URL.
+
+    Accepts any of:
+        https://musicbrainz.org/release/abc12345-...
+        https://musicbrainz.org/release/abc12345-.../disc/1
+
+    Returns the UUID string, or None if no valid MBID is found.
+    """
+    m = _MBID_RE.search(url)
+    return m.group(1) if m else None
+
+
+def resolve_mbid(tags, audio_path, log):
     """
     Get the best MBID for a release, trying five strategies in order:
     1. MBID tag
@@ -564,7 +773,7 @@ def resolve_mbid(tags, flac_path, log):
             log.error("  ! Artist+album tag search failed: %s" % e)
 
     # 4. Catno from filename
-    fn_catno, fn_artist, fn_title = parse_filename(flac_path)
+    fn_catno, fn_artist, fn_title = parse_filename(audio_path)
     if fn_catno and fn_catno != catno:   # skip if same as tag catno already tried
         log.info("  ~ Strategy 4: catno from filename (%s)" % fn_catno)
         try:
@@ -589,28 +798,45 @@ def resolve_mbid(tags, flac_path, log):
     return None, None
 
 
-def process_flac(flac_path, release_data_cache, log):
+def process_audio(audio_path, release_data_cache, log,
+                  dry_run=True, forced_mbid=None, confirm_callback=None):
     """
-    Generate a CUE sheet for one FLAC file.
+    Generate a CUE sheet for one audio file.
+    In dry_run mode: resolves the MB match and shows a preview, but does not write.
+    In apply mode: calls confirm_callback(cue_path) -> bool, then writes if True.
+
+    forced_mbid    : if provided (via --url flag), skip tag reading and the
+                     search fallback chain and use this MBID directly.
+    confirm_callback: callable(cue_path) -> bool, or None.
+                     CLI passes an input()-based lambda; GUI passes None
+                     (meaning the caller pre-confirmed, so write unconditionally).
+
     Returns a report row dict.
     """
     row = {f: "" for f in REPORT_FIELDS}
-    row["flac_path"]     = str(flac_path.parent)
-    row["flac_filename"] = flac_path.name
+    row["audio_path"]     = str(audio_path.parent)
+    row["audio_filename"] = audio_path.name
+    row["audio_format"]   = audio_path.suffix.lower().lstrip(".")
 
     log.info("")
-    log.info("  File: %s" % flac_path.name)
+    log.info("  File  : %s" % audio_path.name)
+    log.info("  Format: %s" % row["audio_format"].upper())
 
     # Read tags
-    tags     = read_flac_tags(flac_path)
-    disc_num = guess_disc_number(tags, flac_path)
+    tags     = read_audio_tags(audio_path)
+    disc_num = guess_disc_number(tags, audio_path)
     row["disc_number"] = disc_num or ""
-    log.info("  Disc : %s" % (disc_num or "unknown — will try to infer from MB data"))
+    log.info("  Disc  : %s" % (disc_num or "unknown — will try to infer from MB data"))
 
-    # Resolve MBID
-    mbid, method = resolve_mbid(tags, flac_path, log)
+    # Resolve MBID — use forced value from --url if provided, otherwise search
+    if forced_mbid:
+        mbid   = forced_mbid
+        method = "MB URL (--url)"
+    else:
+        mbid, method = resolve_mbid(tags, audio_path, log)
+
     if not mbid:
-        msg = "Could not find a MusicBrainz match — tag this file first or provide an MBID manually"
+        msg = "Could not find a MusicBrainz match — tag this file first or provide a URL with --url"
         log.warning("  ! %s" % msg)
         row["status"] = "no_match"
         row["notes"]  = msg
@@ -618,7 +844,7 @@ def process_flac(flac_path, release_data_cache, log):
 
     row["mbid"]        = mbid
     row["mbid_source"] = method
-    log.info("  MBID : %s  (via %s)" % (mbid, method))
+    log.info("  MBID  : %s  (via %s)" % (mbid, method))
 
     # Fetch release (cached)
     if mbid not in release_data_cache:
@@ -645,7 +871,7 @@ def process_flac(flac_path, release_data_cache, log):
     log.info("  Artist: %s" % album_artist)
     log.info("  Discs in release: %d" % len(media_list))
 
-    # Match this FLAC to the correct disc
+    # Match this file to the correct disc
     if disc_num and disc_num <= len(media_list):
         media = media_list[disc_num - 1]
     elif len(media_list) == 1:
@@ -689,13 +915,13 @@ def process_flac(flac_path, release_data_cache, log):
 
     # Build CUE content
     cue_content = build_cue(
-        disc_tracks   = tracks,
-        flac_filename = flac_path.name,
-        album_title   = album_title,
-        album_artist  = album_artist,
+        disc_tracks    = tracks,
+        audio_filename = audio_path.name,
+        album_title    = album_title,
+        album_artist   = album_artist,
     )
 
-    # Preview
+    # Preview (shown in both dry-run and apply modes)
     log.info("")
     log.info("  ── CUE preview ──────────────────────────────────────")
     for line in cue_content.splitlines()[:12]:
@@ -704,12 +930,23 @@ def process_flac(flac_path, release_data_cache, log):
         log.info("  ... (%d more lines)" % (len(cue_content.splitlines()) - 12))
     log.info("  ─────────────────────────────────────────────────────")
 
-    # Confirm
-    cue_path = flac_path.with_suffix(".cue")
+    cue_path = audio_path.with_suffix(".cue")
     row["cue_path"] = str(cue_path)
+
+    # ── Dry-run: report match but do not write ─────────────────────────────────
+    if dry_run:
+        log.info("  [DRY RUN] Would write: %s" % cue_path.name)
+        row["status"] = "dry_run"
+        row["notes"]  = row["notes"] or "Match found — run with --apply to write"
+        return row
+
+    # ── Apply: confirm per file (via callback), then write ─────────────────────
     log.info("")
-    confirm = input("  Write CUE to %s ? (y/n): " % cue_path.name).strip().lower()
-    if confirm != "y":
+    if confirm_callback is not None:
+        confirmed = confirm_callback(cue_path)
+    else:
+        confirmed = True  # GUI pre-confirms before calling; auto-proceed
+    if not confirmed:
         log.info("  Skipped by user.")
         row["status"] = "skipped"
         row["notes"]  = row["notes"] or "Skipped by user"
@@ -729,67 +966,91 @@ def process_flac(flac_path, release_data_cache, log):
     return row
 
 
-def main():
-    args      = [a for a in sys.argv[1:] if not a.startswith("--")]
-    flags     = [a for a in sys.argv[1:] if a.startswith("--")]
-    scan_mode = "--scan" in flags
+def run_flac_to_cue(
+    target,
+    apply=False,
+    recursive=False,
+    skip_existing_cue=False,
+    forced_mbid=None,
+    reports_dir=None,
+    confirm_callback=None,
+    progress_callback=None,
+    log_callback=None,
+):
+    """
+    GUI-callable core for Audio to CUE.
 
-    # Set up report/log paths before anything else
-    csv_path, log_path = setup_output_paths()
-    log = setup_logger(log_path)
+    Parameters
+    ----------
+    target            : str or Path — audio file or folder to process.
+    apply             : bool — False = dry run (default), True = write CUE files.
+    recursive         : bool — scan subfolders recursively (--scan mode).
+    skip_existing_cue : bool — skip audio files that already have a .cue next to them.
+    forced_mbid       : str or None — use this MBID directly, skipping tag/search
+                        fallback (equivalent to --url on the CLI).
+    reports_dir       : Path or None — override the default reports directory.
+    confirm_callback  : callable(cue_path: Path) -> bool, or None.
+                        Called before writing each CUE in apply mode.
+                        Return True to write, False to skip.
+                        If None, writes are auto-confirmed (GUI pre-confirms).
+    progress_callback : callable(current: int, total: int, filename: str) or None.
+    log_callback      : callable(message: str) or None — receives all INFO+ log lines.
 
-    if scan_mode:
-        if args:
-            scan_root = args[0].strip('"')
-        else:
-            scan_root = pick_folder(title="Select folder to scan for FLAC files")
-            if not scan_root:
-                log.info("No folder selected. Exiting.")
-                sys.exit(0)
-        target    = scan_root
-        recursive = True
-        skip_cue  = True
-        log.info("")
-        log.info("=" * 60)
-        log.info("  FLAC to CUE  v1.2")
-        log.info("=" * 60)
-        log.info("  Scanning : %s" % target)
-        log.info("  (FLAC files with existing .cue will be skipped)")
-        log.info("=" * 60)
-    elif args:
-        target    = args[0].strip('"')
-        recursive = False
-        skip_cue  = False
-        log.info("")
-        log.info("=" * 60)
-        log.info("  FLAC to CUE  v1.2")
-        log.info("=" * 60)
+    Returns
+    -------
+    dict with keys:
+        rows        — list of report row dicts (one per audio file processed)
+        counts      — dict mapping status string to count
+        csv_path    — Path to the CSV report written this run
+        log_path    — Path to the log file written this run
+        report_path — alias for csv_path (PW-01 convention)
+        reports_dir — Path to the reports directory used
+    """
+    target = Path(target)
+    if not target.exists():
+        raise ValueError("Path not found: %s" % target)
+    if not (target.is_file() or target.is_dir()):
+        raise ValueError("Path is not a file or directory: %s" % target)
+
+    dry_run = not apply
+
+    csv_path, log_path = setup_output_paths(dry_run, reports_dir)
+    log = setup_logger(log_path, log_callback=log_callback)
+
+    mode_label = ("DRY RUN — no files will be written" if dry_run
+                  else "APPLY — CUE files will be written")
+
+    log.info("")
+    log.info("=" * 60)
+    log.info("  Audio to CUE  v2.6")
+    log.info("=" * 60)
+    log.info("  Mode    : %s" % mode_label)
+    if forced_mbid:
+        log.info("  MBID    : %s  (from --url)" % forced_mbid)
+    if recursive:
+        log.info("  Scanning: %s" % target)
+        log.info("  (audio files with existing .cue will be skipped)")
     else:
-        chosen = pick_folder_or_file()
-        if not chosen:
-            log.info("No file or folder selected. Exiting.")
-            sys.exit(0)
-        target    = chosen
-        recursive = False
-        skip_cue  = False
+        log.info("  Target  : %s" % target)
+    log.info("=" * 60)
+
+    audio_files = find_audio_files(target, recursive=recursive,
+                                   skip_existing_cue=skip_existing_cue)
+
+    if not audio_files:
         log.info("")
-        log.info("=" * 60)
-        log.info("  FLAC to CUE  v1.2")
-        log.info("=" * 60)
+        log.info("  No audio files found that need CUE sheets.")
+        return {
+            "rows":        [],
+            "counts":      {},
+            "csv_path":    csv_path,
+            "log_path":    log_path,
+            "report_path": csv_path,
+            "reports_dir": csv_path.parent,
+        }
 
-    if not Path(target).exists():
-        log.error("ERROR: Path not found: %s" % target)
-        sys.exit(1)
-
-    flac_files = find_flac_files(target, recursive=recursive,
-                                 skip_existing_cue=skip_cue)
-
-    if not flac_files:
-        log.info("")
-        log.info("  No FLAC files found that need CUE sheets.")
-        sys.exit(0)
-
-    log.info("  Found %d FLAC file(s) to process" % len(flac_files))
+    total = len(audio_files)
+    log.info("  Found %d audio file(s) to process" % total)
     log.info("  Report : %s" % csv_path.name)
     log.info("  Log    : %s" % log_path.name)
     log.info("=" * 60)
@@ -797,31 +1058,322 @@ def main():
     release_cache = {}
     rows          = []
 
-    for flac_path in flac_files:
-        row = process_flac(flac_path, release_cache, log)
+    for i, audio_path in enumerate(audio_files, 1):
+        if progress_callback:
+            progress_callback(i, total, audio_path.name)
+        row = process_audio(
+            audio_path, release_cache, log,
+            dry_run=dry_run,
+            forced_mbid=forced_mbid,
+            confirm_callback=confirm_callback,
+        )
         rows.append(row)
 
-    # Write CSV
     write_csv(rows, csv_path)
 
-    # Summary
     counts = {}
     for r in rows:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
 
     log.info("")
     log.info("=" * 60)
-    log.info("  SUMMARY")
+    log.info("  SUMMARY (%s)" % ("DRY RUN" if dry_run else "APPLIED"))
     log.info("=" * 60)
-    log.info("  Written       : %d" % counts.get("written",     0))
-    log.info("  Skipped       : %d" % counts.get("skipped",     0))
+    if dry_run:
+        log.info("  Would write   : %d" % counts.get("dry_run",     0))
+    else:
+        log.info("  Written       : %d" % counts.get("written",     0))
+        log.info("  Skipped       : %d" % counts.get("skipped",     0))
     log.info("  No MB match   : %d" % counts.get("no_match",    0))
     log.info("  API errors    : %d" % counts.get("api_error",   0))
-    log.info("  Write errors  : %d" % counts.get("write_error", 0))
+    if not dry_run:
+        log.info("  Write errors  : %d" % counts.get("write_error", 0))
     log.info("")
     log.info("  Report : %s" % csv_path)
     log.info("  Log    : %s" % log_path)
     log.info("=" * 60)
+    if dry_run:
+        log.info("")
+        log.info("  This was a DRY RUN. Re-run with --apply to write CUE files.")
+        log.info("=" * 60)
+
+    return {
+        "rows":        rows,
+        "counts":      counts,
+        "csv_path":    csv_path,
+        "log_path":    log_path,
+        "report_path": csv_path,
+        "reports_dir": csv_path.parent,
+    }
+
+
+def main():
+    # ── Flag parsing ───────────────────────────────────────────────────────────
+    DRY_RUN   = "--apply" not in sys.argv
+    PICK_DIR  = "--pick"  in sys.argv
+    SCAN_MODE = "--scan"  in sys.argv
+
+    _path_flag = next(
+        (sys.argv[i + 1] for i, a in enumerate(sys.argv)
+         if a == "--path" and i + 1 < len(sys.argv)),
+        None,
+    )
+
+    _url_flag = next(
+        (sys.argv[i + 1] for i, a in enumerate(sys.argv)
+         if a == "--url" and i + 1 < len(sys.argv)),
+        None,
+    )
+
+    interactive_options([])
+
+    # ── Validate --url if provided ─────────────────────────────────────────────
+    forced_mbid = None
+    if _url_flag:
+        forced_mbid = extract_mbid_from_url(_url_flag)
+        if not forced_mbid:
+            print("ERROR: Could not extract a MusicBrainz Release ID from the URL.")
+            print("       Expected format: https://musicbrainz.org/release/<uuid>")
+            print("       Got: %s" % _url_flag)
+            sys.exit(1)
+
+    # ── Determine target path ──────────────────────────────────────────────────
+    if SCAN_MODE:
+        if _path_flag:
+            target = _path_flag.strip('"')
+        else:
+            target = pick_folder(title="Select folder to scan for audio files")
+            if not target:
+                print("No folder selected. Exiting.")
+                sys.exit(0)
+        recursive = True
+        skip_cue  = True
+
+    elif _path_flag:
+        target    = _path_flag.strip('"')
+        recursive = False
+        skip_cue  = False
+
+    elif PICK_DIR:
+        chosen = pick_folder_or_file()
+        if not chosen:
+            print("No file or folder selected. Exiting.")
+            sys.exit(0)
+        target    = chosen
+        recursive = False
+        skip_cue  = False
+
+    else:
+        # No flag — fall back to picker (keeps original double-click behaviour)
+        chosen = pick_folder_or_file()
+        if not chosen:
+            print("No file or folder selected. Exiting.")
+            sys.exit(0)
+        target    = chosen
+        recursive = False
+        skip_cue  = False
+
+    # ── CLI per-file confirmation callback ────────────────────────────────────
+    def cli_confirm(cue_path):
+        answer = input("  Write CUE to %s ? (y/n): " % cue_path.name).strip().lower()
+        while answer not in ("y", "n"):
+            answer = input("  Please enter y or n: ").strip().lower()
+        return answer == "y"
+
+    # ── Run ───────────────────────────────────────────────────────────────────
+    try:
+        run_flac_to_cue(
+            target            = target,
+            apply             = not DRY_RUN,
+            recursive         = recursive,
+            skip_existing_cue = skip_cue,
+            forced_mbid       = forced_mbid,
+            confirm_callback  = cli_confirm if not DRY_RUN else None,
+        )
+    except ValueError as exc:
+        print("ERROR: %s" % exc)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+und that need CUE sheets.")
+        return {
+            "rows":        [],
+            "counts":      {},
+            "csv_path":    csv_path,
+            "log_path":    log_path,
+            "report_path": csv_path,
+            "reports_dir": csv_path.parent,
+        }
+
+    total = len(audio_files)
+    log.info("  Found %d audio file(s) to process" % total)
+    log.info("  Report : %s" % csv_path.name)
+    log.info("  Log    : %s" % log_path.name)
+    log.info("=" * 60)
+
+    release_cache = {}
+    rows          = []
+
+    for i, audio_path in enumerate(audio_files, 1):
+        if progress_callback:
+            progress_callback(i, total, audio_path.name)
+        row = process_audio(
+            audio_path, release_cache, log,
+            dry_run=dry_run,
+            forced_mbid=forced_mbid,
+            confirm_callback=confirm_callback,
+        )
+        rows.append(row)
+
+    write_csv(rows, csv_path)
+
+    counts = {}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+    log.info("")
+    log.info("=" * 60)
+    log.info("  SUMMARY (%s)" % ("DRY RUN" if dry_run else "APPLIED"))
+    log.info("=" * 60)
+    if dry_run:
+        log.info("  Would write   : %d" % counts.get("dry_run",     0))
+    else:
+        log.info("  Written       : %d" % counts.get("written",     0))
+        log.info("  Skipped       : %d" % counts.get("skipped",     0))
+    log.info("  No MB match   : %d" % counts.get("no_match",    0))
+    log.info("  API errors    : %d" % counts.get("api_error",   0))
+    if not dry_run:
+        log.info("  Write errors  : %d" % counts.get("write_error", 0))
+    log.info("")
+    log.info("  Report : %s" % csv_path)
+    log.info("  Log    : %s" % log_path)
+    log.info("=" * 60)
+    if dry_run:
+        log.info("")
+        log.info("  This was a DRY RUN. Re-run with --apply to write CUE files.")
+        log.info("=" * 60)
+
+    return {
+        "rows":        rows,
+        "counts":      counts,
+        "csv_path":    csv_path,
+        "log_path":    log_path,
+        "report_path": csv_path,
+        "reports_dir": csv_path.parent,
+    }
+
+
+def main():
+    # -- Flag parsing -----------------------------------------------------------
+    DRY_RUN   = "--apply" not in sys.argv
+    PICK_DIR  = "--pick"  in sys.argv
+    SCAN_MODE = "--scan"  in sys.argv
+
+    _path_flag = next(
+        (sys.argv[i + 1] for i, a in enumerate(sys.argv)
+         if a == "--path" and i + 1 < len(sys.argv)),
+        None,
+    )
+
+    _url_flag = next(
+        (sys.argv[i + 1] for i, a in enumerate(sys.argv)
+         if a == "--url" and i + 1 < len(sys.argv)),
+        None,
+    )
+
+    interactive_options([])
+
+    # -- Validate --url if provided --------------------------------------------
+    forced_mbid = None
+    if _url_flag:
+        forced_mbid = extract_mbid_from_url(_url_flag)
+        if not forced_mbid:
+            print("ERROR: Could not extract a MusicBrainz Release ID from the URL.")
+            print("       Expected format: https://musicbrainz.org/release/<uuid>")
+            print("       Got: %s" % _url_flag)
+            sys.exit(1)
+
+    # -- Determine target path -------------------------------------------------
+    if SCAN_MODE:
+        if _path_flag:
+            target = _path_flag.strip('"')
+        else:
+            target = pick_folder(title="Select folder to scan for audio files")
+            if not target:
+                print("No folder selected. Exiting.")
+                sys.exit(0)
+        recursive = True
+        skip_cue  = True
+
+    elif _path_flag:
+        target    = _path_flag.strip('"')
+        recursive = False
+        skip_cue  = False
+
+    elif PICK_DIR:
+        chosen = pick_folder_or_file()
+        if not chosen:
+            print("No file or folder selected. Exiting.")
+            sys.exit(0)
+        target    = chosen
+        recursive = False
+        skip_cue  = False
+
+    else:
+        # No flag -- fall back to picker (keeps original double-click behaviour)
+        chosen = pick_folder_or_file()
+        if not chosen:
+            print("No file or folder selected. Exiting.")
+            sys.exit(0)
+        target    = chosen
+        recursive = False
+        skip_cue  = False
+
+    # -- CLI per-file confirmation callback ------------------------------------
+    def cli_confirm(cue_path):
+        answer = input("  Write CUE to %s ? (y/n): " % cue_path.name).strip().lower()
+        while answer not in ("y", "n"):
+            answer = input("  Please enter y or n: ").strip().lower()
+        return answer == "y"
+
+    # -- Run -------------------------------------------------------------------
+    try:
+        run_flac_to_cue(
+            target            = target,
+            apply             = not DRY_RUN,
+            recursive         = recursive,
+            skip_existing_cue = skip_cue,
+            forced_mbid       = forced_mbid,
+            confirm_callback  = cli_confirm if not DRY_RUN else None,
+        )
+    except ValueError as exc:
+        print("ERROR: %s" % exc)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+
+    try:
+        run_flac_to_cue(
+            target            = target,
+            apply             = not DRY_RUN,
+            recursive         = recursive,
+            skip_existing_cue = skip_cue,
+            forced_mbid       = forced_mbid,
+            confirm_callback  = cli_confirm if not DRY_RUN else None,
+        )
+    except ValueError as exc:
+        print("ERROR: %s" % exc)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+rint("ERROR: %s" % exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

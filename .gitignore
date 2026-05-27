@@ -1,24 +1,44 @@
-# Personal config files with real folder paths — use *.example.json instead
+# ── Personal config (real folder paths) ───────────────────────────────────────
+# Use the *.example.json files as templates instead
 music_config.json
 library_dupes_config.json
 
-# Auto-generated cache files
+# ── Auto-generated cache & runtime files ──────────────────────────────────────
+music_cache.db
 music_cache.json
 music_fp_cache.json
-library_fp_cache.json
 music_resume.json
+*.json.migrated
 
-# Reports (timestamped, personal) — all tools
+# ── Reports (timestamped, personal output) ────────────────────────────────────
 **/reports/
 
-# library_dupes removed files folder
+# ── Generated test content ────────────────────────────────────────────────────
+testing_environment/
+
+# ── library_dupes working folder ──────────────────────────────────────────────
 library_dupes/removed/
 
-# Python
+# ── Claude / Cowork session files ─────────────────────────────────────────────
+# These are local Claude Code project infrastructure — not needed by other users
+CLAUDE.md
+TASKS.md
+Claude Session Hand-offs/
+handoff_*.txt
+skill-observations/
+task-observer/
+music-tools-project-skill/
+music-tools-project-skill-workspace/
+
+# ── Personal local notes ──────────────────────────────────────────────────────
+Install Notes - claude-mem and code-simplifier.md
+Music Tools — GUI Application Roadmap.pdf
+
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 
-# OS
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

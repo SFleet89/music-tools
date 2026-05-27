@@ -1,5 +1,5 @@
 """
-CD Folder Renamer  v1.1
+CD Folder Renamer  v1.3
 ========================
 Finds folders named "CD #" (with a space) and renames them to "CD#" (no space).
 
@@ -24,11 +24,19 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import pick_folder
+from music_tools_common import interactive_options
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRIPT_DIR     = Path(__file__).parent
 REPORTS_FOLDER = SCRIPT_DIR / "reports"
 
 # ── Parse flags ────────────────────────────────────────────────────────────────
+# ── Interactive options ───────────────────────────────────────────────────────
+interactive_options([
+])
+
 DRY_RUN  = "--apply" not in sys.argv
 PICK_DIR = "--pick"  in sys.argv
 
@@ -42,25 +50,6 @@ CD_PATTERN = re.compile(r'^(.*\bCD) (\d+)(.*)$', re.IGNORECASE)
 
 
 # ── Folder picker ───────────────────────────────────────────────────────────────
-
-def pick_folder() -> Path | None:
-    """Open a native folder-picker dialog and return the selected path."""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except ImportError:
-        print("ERROR: tkinter is not available on this system.")
-        sys.exit(1)
-
-    root_tk = tk.Tk()
-    root_tk.withdraw()
-    root_tk.attributes("-topmost", True)
-
-    folder = filedialog.askdirectory(title="Select folder to scan for CD subfolders")
-    root_tk.destroy()
-
-    return Path(folder) if folder else None
-
 
 # ── Scanner ─────────────────────────────────────────────────────────────────────
 
@@ -120,17 +109,13 @@ def write_report(candidates: list[dict], root: Path, dry_run: bool):
 if __name__ == "__main__":
 
     # Determine root folder
-    if PICK_DIR:
+    if _path_flag:
+        root = Path(_path_flag.strip('"'))
+    else:
         root = pick_folder()
         if not root:
             print("\n  No folder selected. Exiting.\n")
             sys.exit(0)
-    elif _path_flag:
-        root = Path(_path_flag.strip('"'))
-    else:
-        print("ERROR: No folder specified.")
-        print("       Use --pick to select a folder, or --path \"C:\\Your\\Music\" to specify one.")
-        sys.exit(1)
 
     if not root.exists() or not root.is_dir():
         print(f"ERROR: Folder not found: {root}")

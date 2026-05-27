@@ -19,7 +19,7 @@ Nothing is changed until you run with `--apply`. Dry run by default.
 | `rename_to_catno.py` | Renames tagged album folders to `CATNO - Album Name` format using embedded tags |
 | `rename_undo.py` | Reverses folder renames made by `rename_to_catno.py` |
 | `fix_featuring.py` | Moves featuring credits from Artist tag to Title tag across all audio files |
-| `flac_to_cue.py` | Generates a CUE sheet for a FLAC file using MusicBrainz data, for splitting with CUETools |
+| `flac_to_cue.py` | Generates a CUE sheet for an audio file (FLAC, WAV, AIFF, MP3, M4A, OGG) using MusicBrainz data, for splitting with CUETools |
 | `move_from_report.py` | Moves review/no-match folders using an existing CSV report, without re-running the lookup |
 | `anjuna_lookup_viewer.html` | Interactive viewer for all lookup CSVs — review and select correct releases |
 
@@ -87,17 +87,43 @@ python mb_tagger.py --apply
 python tagger_undo.py --apply
 ```
 
-### FLAC to CUE (single large FLAC → split tracks)
+### Audio to CUE (single large audio file → split tracks)
 
-For releases where you have one FLAC per disc but no CUE sheet:
+For releases where you have one audio file per disc (FLAC, WAV, AIFF, MP3,
+M4A, or OGG) but no CUE sheet. Dry run by default — use `--apply` to write.
 
 ```
-# Generate CUE sheets from MusicBrainz data
-python flac_to_cue.py
+# Dry run — resolves MB matches and shows CUE previews, nothing written
+python flac_to_cue.py --pick
+
+# Write CUE sheets (confirms each file before writing)
+python flac_to_cue.py --pick --apply
+
+# Recursive scan of a folder (skips files that already have a .cue)
+python flac_to_cue.py --scan --apply
+
+# Untagged WAV — provide the MusicBrainz URL directly (dry run)
+python flac_to_cue.py --url "https://musicbrainz.org/release/<uuid>" --pick
+
+# Untagged WAV — provide URL + path, write CUE
+python flac_to_cue.py --url "https://musicbrainz.org/release/<uuid>" --path "CD1.wav" --apply
+
+# Multi-disc untagged WAVs in one folder — point --path at the folder
+python flac_to_cue.py --url "https://musicbrainz.org/release/<uuid>" --path "C:\album\" --apply
 
 # Then open each .cue in CUETools to split into individual tracks
-# CUETools will look for the matching FLAC in the same folder automatically
+# CUETools will look for the matching audio file in the same folder automatically
 ```
+
+**`--url` flag:** Use this when the auto-lookup fails or when you have a completely
+untagged WAV file. Copy the release URL from MusicBrainz and pass it with `--url`.
+The MBID is extracted from the URL and the full tag-reading and search fallback chain
+are bypassed. Everything else (dry-run, confirmation, reports, multi-disc matching)
+works as normal.
+
+**Launchers:**
+- `Run - FLAC to CUE (Dry Run).cmd` — opens picker, shows matches without writing
+- `Run - FLAC to CUE (Apply).cmd`  — opens picker, confirms and writes CUE files
 
 ---
 

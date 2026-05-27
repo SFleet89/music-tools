@@ -1,5 +1,5 @@
 """
-Anjunabeats MusicBrainz Batch Lookup  v1.5
+Anjunabeats MusicBrainz Batch Lookup  v1.6
 ===========================================
 Scans a batch folder of Anjunabeats releases, extracts the catalogue
 number from each subfolder name, and looks it up on MusicBrainz.
@@ -66,14 +66,17 @@ except ImportError:
     print("WARNING: mutagen not installed — file metadata comparison disabled.")
     print("         Run: pip install mutagen\n")
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# ── Shared module ──────────────────────────────────────────────────────────────
+from music_mb_common import (
+    SUPPORTED_EXTENSIONS, MB_API_BASE, USER_AGENT, REQUEST_DELAY,
+    RESULT_LIMIT, FUZZY_THRESHOLD,
+    mb_get, mb_fetch_release,
+    fuzzy_score, read_folder_metadata,
+    combined_score, release_label, get_mb_catnos,
+    move_flagged_folders,
+)
 
-SUPPORTED_EXTENSIONS  = {".mp3", ".flac", ".aac", ".m4a"}
-MB_API_BASE           = "https://musicbrainz.org/ws/2"
-USER_AGENT            = "AnjunaMBLookup/1.2 ( music-tools )"
-REQUEST_DELAY         = 1.1    # seconds between MB requests (rate limit: 1/sec)
-RESULT_LIMIT          = 10     # max results per catno search
-FUZZY_THRESHOLD       = 70     # minimum fuzzy score to count a track title as matching
+# ── Config ─────────────────────────────────────────────────────────────────────
 
 # Script directory — reports always save here regardless of batch folder location
 SCRIPT_DIR = Path(__file__).parent
@@ -152,62 +155,7 @@ def generate_variants(catno):
     return variants
 
 
-# ── Fuzzy string matching ──────────────────────────────────────────────────────
-
-def fuzzy_score(a, b):
-    import difflib
-    a = a.lower().strip()
-    b = b.lower().strip()
-    if a == b:
-        return 100
-    return int(difflib.SequenceMatcher(None, a, b).ratio() * 100)
-
-
-# ── File metadata reading ──────────────────────────────────────────────────────
-
-def read_folder_metadata(folder_path):
-    result = {"track_count": 0, "titles": [], "artists": set(), "albums": set()}
-
-    files = sorted(
-        f for f in Path(folder_path).iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
-    result["track_count"] = len(files)
-
-    if not MUTAGEN_AVAILABLE:
-        return result
-
-    for f in files:
-        try:
-            audio = MutagenFile(f, easy=True)
-            if audio:
-                title  = (audio.get("title",  [""])[0] or "").strip().lower()
-                artist = (audio.get("artist", [""])[0] or "").strip().lower()
-                album  = (audio.get("album",  [""])[0] or "").strip().lower()
-                if title:  result["titles"].append(title)
-                if artist: result["artists"].add(artist)
-                if album:  result["albums"].add(album)
-        except Exception:
-            pass
-
-    return result
-
-
 # ── MusicBrainz API calls ──────────────────────────────────────────────────────
-
-_last_request = 0
-
-def mb_get(url):
-    global _last_request
-    elapsed = time.time() - _last_request
-    if elapsed < REQUEST_DELAY:
-        time.sleep(REQUEST_DELAY - elapsed)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    _last_request = time.time()
-    return data
-
 
 def mb_search_catno(catno):
     params = urllib.parse.urlencode({
@@ -217,18 +165,6 @@ def mb_search_catno(catno):
     })
     data = mb_get("%s/release?%s" % (MB_API_BASE, params))
     return data.get("releases", [])
-
-
-def mb_fetch_release(mbid):
-    params = urllib.parse.urlencode({
-        "inc": "recordings artist-credits labels",
-        "fmt": "json",
-    })
-    try:
-        return mb_get("%s/release/%s?%s" % (MB_API_BASE, mbid, params))
-    except Exception as e:
-        print("          ! Error fetching release %s: %s" % (mbid, e))
-        return None
 
 
 def get_mb_track_titles(release_detail):
@@ -360,10 +296,6 @@ def score_metadata_match(folder_meta, release_detail):
             "count_match": count_match, "details": details}
 
 
-def combined_score(catno_score, meta_score):
-    return int(catno_score * 0.6 + meta_score * 0.4)
-
-
 # ── Folder scanning ────────────────────────────────────────────────────────────
 
 def scan_batch_folder(batch_path):
@@ -378,32 +310,6 @@ def scan_batch_folder(batch_path):
         if has_music:
             results.append((sub, extract_catno(sub.name)))
     return results
-
-
-# ── Formatting helpers ─────────────────────────────────────────────────────────
-
-def release_label(release):
-    title      = release.get("title", "Unknown")
-    artist     = release.get("artist-credit-phrase", "")
-    date       = release.get("date", "")
-    label_info = release.get("label-info", [])
-    catnos     = ", ".join(
-        li.get("catalog-number", "")
-        for li in label_info if li.get("catalog-number")
-    )
-    parts = [title]
-    if artist: parts.append(artist)
-    if date:   parts.append(date[:4])
-    if catnos: parts.append("[%s]" % catnos)
-    return "  —  ".join(parts)
-
-
-def get_mb_catnos(release):
-    return ", ".join(
-        li.get("catalog-number", "")
-        for li in release.get("label-info", [])
-        if li.get("catalog-number")
-    )
 
 
 # ── Main lookup loop ───────────────────────────────────────────────────────────
@@ -583,74 +489,6 @@ def _make_row(folder_name, folder_path, catno, searched_catno, status,
     }
 
 
-# ── Folder mover ───────────────────────────────────────────────────────────────
-
-def move_flagged_folders(rows, apply_mode):
-    """
-    Move review/not_found/no_catno folders into subfolders next to their
-    current location:
-      status=review              → <parent>/To Review/<folder>
-      status=not_found|no_catno → <parent>/No Match/<folder>
-    Dry run by default; pass apply_mode=True to execute moves.
-    """
-    import shutil as _shutil
-
-    DEST_MAP = {
-        "review":    "To Review",
-        "not_found": "No Match",
-        "no_catno":  "No Match",
-    }
-
-    moves = []
-    for row in rows:
-        dest_name = DEST_MAP.get(row.get("status", ""))
-        if not dest_name:
-            continue
-        src = Path(row["folder_path"])
-        if not src.exists():
-            continue
-        dest_dir = src.parent / dest_name
-        moves.append((src, dest_dir / src.name, dest_dir, dest_name))
-
-    print()
-    print("=" * 60)
-    print("  FOLDER MOVE  (%s)" % ("APPLY" if apply_mode else "DRY RUN"))
-    print("=" * 60)
-
-    if not moves:
-        print("  No folders to move.")
-        print("=" * 60)
-        return
-
-    for src, dst, dest_dir, label in moves:
-        print("  [%-10s]  %s" % (label, src.name))
-
-    if not apply_mode:
-        print()
-        print("  %d folder(s) would be moved. Add --apply to execute." % len(moves))
-        print("=" * 60)
-        return
-
-    moved = errors = 0
-    seen_dirs = set()
-    for src, dst, dest_dir, label in moves:
-        if dest_dir not in seen_dirs:
-            dest_dir.mkdir(exist_ok=True)
-            seen_dirs.add(dest_dir)
-        try:
-            _shutil.move(str(src), str(dst))
-            moved += 1
-        except Exception as e:
-            print("  ! Error moving %s: %s" % (src.name, e))
-            errors += 1
-
-    print()
-    print("  Moved : %d" % moved)
-    if errors:
-        print("  Errors: %d" % errors)
-    print("=" * 60)
-
-
 # ── CSV output ─────────────────────────────────────────────────────────────────
 
 FIELDNAMES = [
@@ -710,7 +548,6 @@ def pick_multiple_folders():
         return None
 
     folders  = []
-    initial  = r"C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC"
 
     root_tk = tk.Tk()
     root_tk.withdraw()
@@ -719,7 +556,6 @@ def pick_multiple_folders():
     while True:
         chosen = filedialog.askdirectory(
             title="Select Anjuna batch folder %d (Cancel when done)" % (len(folders) + 1),
-            initialdir=initial,
             parent=root_tk,
         )
         if not chosen:
@@ -742,6 +578,66 @@ def pick_multiple_folders():
 
     root_tk.destroy()
     return folders if folders else None
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_anjuna_mb_lookup(
+    batch_path,
+    auto_mode: bool = True,
+    reports_dir=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Run an Anjuna MusicBrainz batch lookup on a folder of album subfolders.
+
+    Args:
+        batch_path:        Root folder containing album subfolders.
+        auto_mode:         True = auto-pick best match; False = flag for review.
+        reports_dir:       Where to save; defaults to <script folder>/../reports.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: matched, auto_matched, review, not_found, errors,
+              rows (list), report_path (Path|None)
+
+    Raises:
+        ValueError: batch_path does not exist or is not a directory.
+    """
+    from collections import Counter
+    log        = log_callback or print
+    batch_path = Path(batch_path)
+
+    if not batch_path.exists() or not batch_path.is_dir():
+        raise ValueError(f"Folder not found: {batch_path}")
+
+    rows = run_lookup(str(batch_path), auto_mode)
+
+    if not rows:
+        return {"matched": 0, "auto_matched": 0, "review": 0,
+                "not_found": 0, "errors": 0, "rows": [], "report_path": None}
+
+    _reports = Path(reports_dir) if reports_dir else SCRIPT_DIR.parent / "reports"
+    _reports.mkdir(parents=True, exist_ok=True)
+    ts          = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = _reports / f"anjuna_lookup_{ts}.csv"
+    write_csv(rows, str(output_path))
+
+    counts = Counter(r["status"] for r in rows)
+    return {
+        "matched":      counts.get("matched", 0),
+        "auto_matched": counts.get("auto_matched", 0),
+        "review":       counts.get("review", 0),
+        "not_found":    counts.get("not_found", 0),
+        "errors":       counts.get("error", 0),
+        "rows":         rows,
+        "report_path":  output_path,
+    }
 
 
 def main():
@@ -797,7 +693,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  Anjunabeats MusicBrainz Batch Lookup  v1.5")
+    print("  Anjunabeats MusicBrainz Batch Lookup  v1.6")
     print("=" * 60)
     print("  Folders   : %d selected" % len(batch_folders))
     for f in batch_folders:

@@ -1,0 +1,2437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Music Tools — Report Viewer</title>
+<style>
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --bg:          #f5f5f5;
+  --surface:     #ffffff;
+  --border:      #e0e0e0;
+  --border-dark: #c0c0c0;
+  --text:        #1a1a1a;
+  --text-muted:  #666666;
+  --accent:      #2563eb;
+  --accent-dim:  #eff6ff;
+  --row-alt:     #fafafa;
+  --row-hover:   #f0f4ff;
+
+  --green-bg:  #dcfce7; --green-fg:  #166534;
+  --amber-bg:  #fef9c3; --amber-fg:  #854d0e;
+  --red-bg:    #fee2e2; --red-fg:    #991b1b;
+  --grey-bg:   #f3f4f6; --grey-fg:   #374151;
+  --blue-bg:   #dbeafe; --blue-fg:   #1e40af;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Cascadia Code", "Consolas", monospace;
+  --radius: 6px;
+  --shadow: 0 1px 3px rgba(0,0,0,.10);
+
+  --font-size:   13px;
+  --thead-bg:    #f0f0f0;
+  --thead-hover: #e5e5e5;
+}
+
+/* ── Dark theme ─────────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg:          #111827;
+  --surface:     #1f2937;
+  --border:      #374151;
+  --border-dark: #4b5563;
+  --text:        #f9fafb;
+  --text-muted:  #9ca3af;
+  --accent:      #3b82f6;
+  --accent-dim:  #1e3a5f;
+  --row-alt:     #18242f;
+  --row-hover:   #1e3048;
+  --shadow:      0 1px 3px rgba(0,0,0,.40);
+
+  --thead-bg:    #374151;
+  --thead-hover: #4b5563;
+
+  --green-bg: #052e16; --green-fg: #4ade80;
+  --amber-bg: #451a03; --amber-fg: #fbbf24;
+  --red-bg:   #450a0a; --red-fg:   #f87171;
+  --grey-bg:  #1f2937; --grey-fg:  #d1d5db;
+  --blue-bg:  #1e3a5f; --blue-fg:  #60a5fa;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font-family: var(--font); font-size: var(--font-size); background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+
+/* ── Layout ────────────────────────────────────────────────────────────────── */
+#app-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  box-shadow: var(--shadow);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+#app-header h1 { font-size: 15px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+#report-type-label {
+  font-size: 12px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+#controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; justify-content: flex-end; }
+#search-box {
+  padding: 5px 10px; border: 1px solid var(--border-dark);
+  border-radius: var(--radius); font-size: 13px; width: 220px;
+  outline: none; font-family: var(--font); color: var(--text); background: var(--surface);
+}
+#search-box:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
+select.filter-select {
+  padding: 5px 8px; border: 1px solid var(--border-dark); border-radius: var(--radius);
+  font-size: 13px; background: var(--surface); color: var(--text); cursor: pointer; font-family: var(--font);
+}
+button.btn {
+  padding: 5px 12px; border-radius: var(--radius); border: 1px solid var(--border-dark);
+  background: var(--surface); cursor: pointer; font-size: 13px; font-family: var(--font);
+  color: var(--text); white-space: nowrap;
+}
+button.btn:hover { background: var(--row-alt); }
+button.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.btn.primary:hover { background: #1d4ed8; }
+
+#row-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+/* ── Drop zone / empty state ───────────────────────────────────────────────── */
+#drop-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+  text-align: center;
+}
+#drop-zone.drag-over { background: var(--accent-dim); }
+#drop-zone .icon { font-size: 48px; }
+#drop-zone h2 { font-size: 20px; font-weight: 600; color: var(--text); }
+#drop-zone p { color: var(--text-muted); max-width: 400px; line-height: 1.5; }
+#file-input { display: none; }
+
+/* ── Table wrapper ─────────────────────────────────────────────────────────── */
+#table-wrapper {
+  flex: 1;
+  overflow: auto;
+  display: none;
+}
+#data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size);
+}
+#data-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--thead-bg);
+}
+#data-table th {
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-dark);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+#data-table th:hover { background: var(--thead-hover); }
+#data-table th.sorted-asc::after  { content: " ▲"; font-size: 10px; }
+#data-table th.sorted-desc::after { content: " ▼"; font-size: 10px; }
+#data-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+#data-table td.wrap { white-space: normal; word-break: break-word; }
+#data-table tr:nth-child(even) td { background: var(--row-alt); }
+#data-table tr:hover td { background: var(--row-hover); }
+#data-table td.mono { font-family: var(--font-mono); font-size: 12px; }
+#data-table td.num  { text-align: right; font-family: var(--font-mono); font-size: 12px; }
+
+/* ── Status badges ─────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge-green { background: var(--green-bg); color: var(--green-fg); }
+.badge-amber { background: var(--amber-bg); color: var(--amber-fg); }
+.badge-red   { background: var(--red-bg);   color: var(--red-fg);   }
+.badge-grey  { background: var(--grey-bg);  color: var(--grey-fg);  }
+.badge-blue  { background: var(--blue-bg);  color: var(--blue-fg);  }
+
+/* ── Score bar ─────────────────────────────────────────────────────────────── */
+.score-bar-wrap { display: flex; align-items: center; gap: 6px; min-width: 90px; }
+.score-bar { height: 6px; border-radius: 3px; flex: 1; background: var(--border); overflow: hidden; }
+.score-bar-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width .2s; }
+.score-val { font-size: 11px; color: var(--text-muted); min-width: 28px; text-align: right; font-family: var(--font-mono); }
+
+/* ── Footer / pagination ───────────────────────────────────────────────────── */
+#footer {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+#footer .page-info { flex: 1; }
+#page-btns { display: flex; gap: 4px; }
+#page-btns button {
+  padding: 3px 8px; border: 1px solid var(--border-dark); border-radius: 4px;
+  background: var(--surface); cursor: pointer; font-size: 12px;
+}
+#page-btns button:hover { background: var(--row-alt); }
+#page-btns button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#page-btns button:disabled { opacity: .4; cursor: default; }
+
+/* ── Column toggle panel ───────────────────────────────────────────────────── */
+#col-panel {
+  position: fixed; top: 55px; right: 12px;
+  background: var(--surface); border: 1px solid var(--border-dark);
+  border-radius: var(--radius); padding: 10px 14px; box-shadow: 0 4px 12px rgba(0,0,0,.15);
+  z-index: 20; display: none; max-height: 400px; overflow-y: auto; min-width: 200px;
+}
+#col-panel h3 { font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--text-muted); }
+#col-panel label { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; cursor: pointer; }
+#col-panel label:hover { color: var(--accent); }
+
+/* ── Column resize handle ───────────────────────────────────────────────────── */
+.col-resize-handle {
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.col-resize-handle:hover,
+.col-resize-handle.resizing { background: var(--accent); opacity: 0.5; }
+
+/* ── Accessibility controls ─────────────────────────────────────────────────── */
+#a11y-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+#a11y-controls .btn { padding: 4px 9px; font-size: 12px; min-width: 30px; text-align: center; }
+#font-size-display {
+  font-size: 11px;
+  color: var(--text);
+  min-width: 30px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-dark); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #999; }
+
+/* ── Tab bar ─────────────────────────────────────────────────────────────────── */
+#tab-bar {
+  background: var(--surface);
+  border-bottom: 2px solid var(--border);
+  padding: 0 12px;
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.tab-btn {
+  padding: 9px 14px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--text-muted);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-count {
+  font-size: 11px;
+  background: var(--border);
+  color: var(--text-muted);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-weight: 500;
+  min-width: 20px;
+  text-align: center;
+}
+.tab-btn.active .tab-count { background: var(--accent-dim); color: var(--accent); }
+
+/* ── Scan Progress Dashboard ────────────────────────────────────────────────── */
+#custom-wrapper { flex: 1; overflow: auto; padding: 20px 24px 40px; }
+.sp-cards { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.sp-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 18px; min-width: 130px; box-shadow: var(--shadow);
+}
+.sp-card-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.sp-card-value { font-size: 24px; font-weight: 700; font-family: var(--font-mono); }
+.sp-card-sub   { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.sp-card-green  .sp-card-value { color: var(--green-fg); }
+.sp-card-red    .sp-card-value { color: var(--red-fg); }
+.sp-card-amber  .sp-card-value { color: var(--amber-fg); }
+.sp-card-blue   .sp-card-value { color: var(--blue-fg); }
+.sp-card-purple .sp-card-value { color: #7c3aed; }
+[data-theme="dark"] .sp-card-purple .sp-card-value { color: #a78bfa; }
+
+.sp-chart-section {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px 20px; margin-bottom: 20px; box-shadow: var(--shadow);
+}
+.sp-chart-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.sp-chart-wrap  { position: relative; height: 200px; }
+.sp-chart-wrap canvas { width: 100% !important; }
+
+.sp-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+.sp-table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 20px; box-shadow: var(--shadow); }
+.sp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.sp-table thead th {
+  background: var(--thead-bg); color: var(--text-muted); font-weight: 600;
+  padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border-dark); white-space: nowrap;
+}
+.sp-table tbody tr { border-bottom: 1px solid var(--border); }
+.sp-table tbody tr:hover td { background: var(--row-hover); }
+.sp-table td { padding: 8px 12px; vertical-align: middle; }
+.sp-num  { text-align: right; font-family: var(--font-mono); }
+.sp-chg-pos  { color: var(--red-fg); }
+.sp-chg-neg  { color: var(--green-fg); }
+.sp-chg-zero { color: var(--text-muted); }
+.sp-bar-cell { display: flex; align-items: center; gap: 8px; }
+.sp-bar      { height: 6px; border-radius: 3px; flex-shrink: 0; min-width: 2px; }
+.sp-bar-text { font-size: 11px; color: var(--text-muted); min-width: 55px; white-space: nowrap; }
+.sp-no-data  { text-align: center; padding: 32px; color: var(--text-muted); font-size: 13px; }
+
+/* ── Duplicates Decisions View ───────────────────────────────────────────────── */
+.dup-pills-bar    { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; align-items:center; }
+.dup-controls-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; align-items:center; }
+.dup-cat-pill {
+  background: var(--surface); border: 1px solid var(--border-dark);
+  border-radius: 20px; padding: 4px 12px; font-size: 12px;
+  display:inline-flex; align-items:center; gap:6px;
+  cursor:pointer; white-space:nowrap; transition: border-color .12s;
+}
+.dup-cat-pill:hover, .dup-cat-pill.active {
+  border-color: var(--accent); background: var(--accent-dim); color: var(--accent);
+}
+.dup-cat-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+
+.dup-tier-label { font-size:11px; color:var(--text-muted); }
+.dup-tier-pill {
+  padding: 3px 10px; border-radius:12px; font-size:11px; font-weight:600;
+  cursor:pointer; border:1px solid; transition: all .12s; user-select:none;
+}
+.dup-tier-pill.tier-inactive { background:var(--surface) !important; border-color:var(--border) !important; color:var(--text-muted) !important; opacity:.45; }
+.dup-tier-high   { background: var(--green-bg); border-color: var(--green-fg); color: var(--green-fg); }
+.dup-tier-medium { background: var(--amber-bg); border-color: var(--amber-fg); color: var(--amber-fg); }
+.dup-tier-low    { background: var(--red-bg);   border-color: var(--red-fg);   color: var(--red-fg);   }
+
+.dup-table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
+.dup-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.dup-table thead th {
+  background: var(--thead-bg); color: var(--text-muted); font-weight:600;
+  padding: 8px 10px; text-align:left; border-bottom:1px solid var(--border-dark);
+  white-space:nowrap; position:sticky; top:0; z-index:2;
+}
+.dup-table tbody tr { border-bottom: 1px solid var(--border); }
+.dup-table tbody tr:hover td { background: var(--row-hover); }
+.dup-table tbody tr.dup-decided td { background: var(--green-bg); }
+[data-theme="dark"] .dup-table tbody tr.dup-decided td { background: #052e16; }
+.dup-table td { padding: 7px 10px; vertical-align: top; }
+
+.dup-path-cell { font-family:var(--font-mono); font-size:11px; color:var(--text-muted); max-width:230px; word-break:break-all; }
+.dup-path-fname { color:var(--text); font-size:12px; font-family:var(--font); font-weight:500; }
+.dup-path-meta  { font-size:11px; color:var(--text-muted); margin-top:2px; }
+
+.dup-badge-fp-high { background:var(--green-bg); border:1px solid var(--green-fg); color:var(--green-fg); display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
+.dup-badge-fp-med  { background:var(--amber-bg); border:1px solid var(--amber-fg); color:var(--amber-fg); display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
+.dup-badge-fp-low  { background:var(--red-bg);   border:1px solid var(--red-fg);   color:var(--red-fg);   display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
+.dup-badge-method  { background:var(--grey-bg); color:var(--grey-fg); display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; white-space:nowrap; }
+
+.dup-dec-cell { white-space:nowrap; vertical-align:middle !important; }
+.dup-dec-btn  { font-size:11px; padding:3px 8px; border-radius:4px; cursor:pointer; border:1px solid; background:none; transition:all .1s; margin-right:2px; margin-bottom:2px; display:inline-block; }
+.dup-keep-u { border-color:var(--blue-fg); color:var(--blue-fg); }
+.dup-keep-u:hover, .dup-keep-u.dec-active { background:var(--blue-bg); }
+.dup-keep-l { border-color:var(--accent); color:var(--accent); }
+.dup-keep-l:hover, .dup-keep-l.dec-active { background:var(--accent-dim); }
+.dup-skip   { border-color:var(--border-dark); color:var(--text-muted); }
+.dup-skip:hover, .dup-skip.dec-active { background:var(--grey-bg); }
+.dup-dec-mark { font-size:11px; color:var(--green-fg); display:block; margin-top:2px; }
+.dup-no-rows  { text-align:center; padding:40px; color:var(--text-muted); }
+
+#dup-dec-panel {
+  position:fixed; bottom:0; left:0; right:0;
+  background:var(--surface); border-top:2px solid var(--border-dark);
+  padding:10px 20px; align-items:center; gap:14px; z-index:50;
+  box-shadow:0 -2px 8px rgba(0,0,0,.12);
+}
+.dp2-stat { font-size:13px; color:var(--text-muted); }
+.dp2-stat strong { color:var(--text); }
+.dp2-clear { padding:6px 14px; border-radius:var(--radius); border:1px solid var(--border-dark); background:var(--surface); cursor:pointer; font-size:12px; color:var(--text); }
+.dp2-clear:hover { border-color:var(--accent); }
+.dp2-download { padding:6px 14px; border-radius:var(--radius); border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:12px; font-weight:500; margin-left:auto; }
+.dp2-download:hover:not(:disabled) { background:#1d4ed8; }
+.dp2-download:disabled { opacity:.35; cursor:default; }
+
+#dup-toast {
+  position:fixed; bottom:65px; left:50%; transform:translateX(-50%) translateY(8px);
+  background:var(--surface); border:1px solid var(--accent); color:var(--text);
+  padding:9px 18px; border-radius:var(--radius); font-size:13px;
+  opacity:0; transition:opacity .2s, transform .2s; pointer-events:none; z-index:100;
+  box-shadow:var(--shadow);
+}
+#dup-toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* ── Library Dupes View ──────────────────────────────────────────────────────── */
+.dup-undo-cmd-btn { margin-left:auto; border-color:var(--accent) !important; color:var(--accent); }
+.dup-undo-cmd-btn:hover { background:var(--accent-dim); }
+
+.ld-toolbar    { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; align-items:center; }
+.ld-view-tabs  { display:flex; gap:4px; }
+.ld-view-tab   { padding:4px 12px; border-radius:var(--radius); border:1px solid var(--border-dark); background:var(--surface); font-size:12px; cursor:pointer; color:var(--text-muted); }
+.ld-view-tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+.ld-method-pill { background:var(--surface); border:1px solid var(--border-dark); border-radius:20px; padding:3px 12px; font-size:12px; cursor:pointer; white-space:nowrap; color:var(--text-muted); }
+.ld-method-pill.active { border-color:var(--accent); background:var(--accent-dim); color:var(--accent); }
+
+.ld-sort-sel { font-size:12px; padding:3px 8px; background:var(--surface); border:1px solid var(--border-dark); border-radius:var(--radius); color:var(--text); cursor:pointer; }
+.ld-count { font-size:12px; color:var(--text-muted); margin-left:auto; }
+
+.ld-pair-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:10px; overflow:hidden; box-shadow:var(--shadow); }
+.ld-pair-card.ld-decided { border-color:var(--green-fg); }
+.ld-pair-header { display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--thead-bg); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.ld-pair-files { display:grid; grid-template-columns:1fr 1fr; gap:0; }
+.ld-file-panel { padding:10px 14px; border-right:1px solid var(--border); }
+.ld-file-panel:last-child { border-right:none; }
+.ld-file-name   { font-size:13px; font-weight:500; color:var(--text); word-break:break-all; }
+.ld-file-folder { font-size:11px; color:var(--accent); margin-top:2px; }
+.ld-file-meta   { font-size:11px; color:var(--text-muted); margin-top:3px; display:flex; gap:4px; flex-wrap:wrap; }
+.ld-file-tags   { font-size:11px; color:var(--text-muted); font-style:italic; margin-top:2px; }
+.ld-file-path   { font-size:10px; color:var(--border-dark); margin-top:3px; font-family:var(--font-mono); word-break:break-all; }
+.ld-meta-chip   { background:var(--grey-bg); color:var(--grey-fg); border-radius:4px; padding:1px 5px; white-space:nowrap; }
+
+.ld-dec-row     { display:flex; gap:4px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--thead-bg); border-top:1px solid var(--border); }
+.ld-dec-label   { font-size:11px; color:var(--text-muted); margin-right:4px; }
+.ld-dec-btn     { font-size:11px; padding:3px 9px; border-radius:4px; cursor:pointer; border:1px solid; background:none; transition:all .1s; }
+.ld-keep-a    { border-color:var(--blue-fg);   color:var(--blue-fg); }
+.ld-keep-a:hover,    .ld-keep-a.ld-active    { background:var(--blue-bg); }
+.ld-keep-b    { border-color:var(--accent);    color:var(--accent); }
+.ld-keep-b:hover,    .ld-keep-b.ld-active    { background:var(--accent-dim); }
+.ld-keep-both { border-color:var(--green-fg);  color:var(--green-fg); }
+.ld-keep-both:hover, .ld-keep-both.ld-active { background:var(--green-bg); }
+.ld-skip      { border-color:var(--border-dark); color:var(--text-muted); }
+.ld-skip:hover,      .ld-skip.ld-active      { background:var(--grey-bg); }
+.ld-decided-badge { font-size:11px; color:var(--green-fg); margin-left:auto; }
+
+.ld-fp-score  { font-size:11px; background:var(--green-bg); color:var(--green-fg); border:1px solid var(--green-fg); border-radius:10px; padding:1px 7px; font-weight:600; }
+.ld-badge-fp       { background:var(--green-bg); border:1px solid var(--green-fg); color:var(--green-fg); display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; }
+.ld-badge-metadata { background:var(--blue-bg);  border:1px solid var(--blue-fg);  color:var(--blue-fg);  display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; }
+.ld-badge-fuzzy    { background:var(--amber-bg); border:1px solid var(--amber-fg); color:var(--amber-fg); display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; }
+.ld-badge-filename { background:var(--grey-bg);  border:1px solid var(--grey-fg);  color:var(--grey-fg);  display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; }
+
+.ld-group-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:10px; overflow:hidden; box-shadow:var(--shadow); }
+.ld-group-card.ld-decided { border-color:var(--green-fg); }
+.ld-group-header { display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--thead-bg); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.ld-group-title { font-weight:500; font-size:13px; color:var(--text); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ld-group-count { font-size:11px; color:var(--text-muted); background:var(--grey-bg); padding:1px 7px; border-radius:10px; }
+.ld-group-files { padding:4px 0; }
+.ld-group-file  { display:flex; align-items:center; gap:10px; padding:8px 14px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.ld-group-file:last-child { border-bottom:none; }
+.ld-gf-info { flex:1; min-width:0; }
+.ld-gf-name   { font-size:12.5px; font-weight:500; color:var(--text); word-break:break-all; }
+.ld-gf-folder { font-size:11px; color:var(--accent); margin-top:1px; }
+.ld-gf-path   { font-size:10px; color:var(--border-dark); margin-top:2px; font-family:var(--font-mono); word-break:break-all; }
+.ld-keep-file-btn { font-size:11px; padding:4px 10px; border-radius:var(--radius); border:1px solid var(--border-dark); background:var(--surface); cursor:pointer; white-space:nowrap; color:var(--text-muted); flex-shrink:0; }
+.ld-keep-file-btn.ld-active { background:var(--green-bg); border-color:var(--green-fg); color:var(--green-fg); font-weight:600; }
+.ld-group-dec-row { display:flex; gap:6px; align-items:center; padding:6px 12px; background:var(--thead-bg); border-top:1px solid var(--border); }
+
+.ld-no-rows { text-align:center; padding:40px; color:var(--text-muted); }
+
+#ld-dec-panel {
+  position:fixed; bottom:0; left:0; right:0;
+  background:var(--surface); border-top:2px solid var(--border-dark);
+  padding:10px 20px; align-items:center; gap:14px; z-index:50;
+  box-shadow:0 -2px 8px rgba(0,0,0,.12);
+}
+#ld-dec-panel .dp2-stat  { font-size:13px; color:var(--text-muted); }
+#ld-dec-panel .dp2-stat strong { color:var(--text); }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<header id="app-header">
+  <h1>🎵 Report Viewer</h1>
+  <span id="report-type-label" style="display:none"></span>
+  <div id="a11y-controls">
+    <button class="btn" id="font-dec-btn" title="Smaller text" aria-label="Decrease font size">A−</button>
+    <span id="font-size-display" aria-live="polite"></span>
+    <button class="btn" id="font-inc-btn" title="Larger text" aria-label="Increase font size">A+</button>
+    <button class="btn" id="dark-mode-btn" title="Switch to dark mode" aria-label="Toggle dark mode">🌙</button>
+  </div>
+  <div id="controls" style="display:none">
+    <input id="search-box" type="search" placeholder="Search…" aria-label="Search rows">
+    <select id="status-filter" class="filter-select" aria-label="Filter by status">
+      <option value="">All statuses</option>
+    </select>
+    <span id="row-count"></span>
+    <button class="btn" id="col-toggle-btn" aria-label="Toggle column visibility" title="Columns">Columns ▾</button>
+    <button class="btn primary" id="export-btn" aria-label="Export filtered CSV">Export CSV</button>
+    <button class="btn" id="open-btn" aria-label="Open another CSV file">Open file…</button>
+  </div>
+  <button class="btn primary" id="header-open-btn" aria-label="Open CSV file">Open CSV file…</button>
+</header>
+
+<!-- ── Column toggle panel ─────────────────────────────────────────────────── -->
+<div id="col-panel" role="dialog" aria-label="Column visibility">
+  <h3>Show / hide columns</h3>
+  <div id="col-checkboxes"></div>
+</div>
+
+<!-- ── Drop zone (empty state) ─────────────────────────────────────────────── -->
+<div id="drop-zone" role="main" aria-label="Drop a CSV report here">
+  <div class="icon" aria-hidden="true">📂</div>
+  <h2>Open a Report CSV</h2>
+  <p>Click the button above, drag a CSV file here, or press <kbd>Space</kbd> to open the file picker. The viewer auto-detects the report type and adjusts the layout.</p>
+  <button class="btn primary" style="font-size:15px;padding:10px 24px" id="zone-open-btn" aria-label="Open CSV file">Open CSV file…</button>
+</div>
+<input type="file" id="file-input" accept=".csv" aria-label="Select CSV file">
+
+<!-- ── Tab bar ─────────────────────────────────────────────────────────────── -->
+<div id="tab-bar" style="display:none" role="tablist" aria-label="Filter by status"></div>
+
+<!-- ── Table ───────────────────────────────────────────────────────────────── -->
+<div id="table-wrapper" role="region" aria-label="Report data">
+  <table id="data-table" aria-label="Report rows">
+    <colgroup id="data-colgroup"></colgroup>
+    <thead id="table-head"></thead>
+    <tbody id="table-body"></tbody>
+  </table>
+</div>
+
+<!-- ── Footer / pagination ─────────────────────────────────────────────────── -->
+<footer id="footer" role="contentinfo">
+  <span class="page-info" id="page-info"></span>
+  <div id="page-btns" role="navigation" aria-label="Pagination"></div>
+  <select id="page-size-select" class="filter-select" aria-label="Rows per page">
+    <option value="50">50 / page</option>
+    <option value="100" selected>100 / page</option>
+    <option value="250">250 / page</option>
+    <option value="0">All rows</option>
+  </select>
+</footer>
+
+<!-- ── Custom render wrapper (scan_progress dashboard, etc.) ─────────────── -->
+<div id="custom-wrapper" style="display:none"></div>
+
+<!-- ── Duplicates decision panel (fixed bottom) ────────────────────────────── -->
+<div id="dup-dec-panel" role="toolbar" aria-label="Decisions" style="display:none">
+  <span class="dp2-stat">Decided: <strong id="dp2-decided">0</strong></span>
+  <span class="dp2-stat">Pending: <strong id="dp2-pending">0</strong></span>
+  <button class="dp2-clear" id="dp2-clear-btn">Clear all</button>
+  <button class="dp2-download" id="dp2-download-btn" disabled>Download decisions CSV</button>
+</div>
+<div id="dup-toast" role="status" aria-live="polite"></div>
+
+<!-- ── Library dupes decision panel (fixed bottom) ──────────────────────────── -->
+<div id="ld-dec-panel" role="toolbar" aria-label="Library dupes decisions" style="display:none">
+  <span class="dp2-stat">Decided: <strong id="ld-decided">0</strong></span>
+  <span class="dp2-stat">Pending: <strong id="ld-pending">0</strong></span>
+  <button class="dp2-clear" id="ld-clear-btn">Clear all</button>
+  <button class="dp2-download" id="ld-download-btn" disabled>Download decisions CSV</button>
+</div>
+
+<script>
+'use strict';
+
+// ── CSV parser ──────────────────────────────────────────────────────────────
+function parseCSV(text) {
+  // Strip UTF-8 BOM
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = [], lines = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], nx = text[i+1];
+    if (ch === '"') {
+      if (inQ && nx === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (!inQ && (ch === '\r' || ch === '\n')) {
+      if (ch === '\r' && nx === '\n') i++;
+      lines.push(cur); cur = '';
+    } else cur += ch;
+  }
+  if (cur) lines.push(cur);
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const row = [], len = line.length;
+    let field = '', q = false, j = 0;
+    while (j <= len) {
+      const c = line[j];
+      if (j === len || (!q && c === ',')) {
+        row.push(field); field = ''; j++;
+      } else if (c === '"') {
+        if (q && line[j+1] === '"') { field += '"'; j += 2; }
+        else { q = !q; j++; }
+      } else { field += c; j++; }
+    }
+    rows.push(row);
+  }
+  if (!rows.length) return { headers: [], data: [] };
+  const headers = rows[0];
+  const data = rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = (r[i] || '').trim());
+    return obj;
+  });
+  return { headers, data };
+}
+
+// ── Status colour map ───────────────────────────────────────────────────────
+const STATUS_COLORS = {
+  // green
+  matched: 'green', ok: 'green', tagged: 'green', modified: 'green',
+  renamed: 'green', cleaned: 'green', fixed: 'green', moved: 'green',
+  restored: 'green', vbr_fixed: 'green', auto_matched: 'green',
+  decode_ok: 'green', 'already correct': 'green',
+  // amber
+  review: 'amber', partial: 'amber', vbr_needs_fix: 'amber',
+  pending: 'amber', no_featuring: 'amber', auto_moved: 'amber',
+  'would move': 'amber', 'would rename': 'amber', would_rename: 'amber',
+  // red
+  error: 'red', not_found: 'red', conflict: 'red',
+  vbr_unfixable: 'red', decode_errors: 'red', failed: 'red', collision: 'red',
+  // audio tag check
+  bad_acoustid_id: 'red', bad_acoustid_fingerprint: 'amber',
+  'bad_acoustid_id + bad_acoustid_fingerprint': 'red',
+  read_error: 'red',
+  // grey/blue
+  skipped: 'grey', 'no match': 'grey', vbr_skipped: 'grey',
+  decode_skipped: 'grey', 'no_featuring': 'grey',
+  // green (correct / complete states)
+  already_correct: 'green', 'already correct': 'green',
+};
+
+function statusBadge(val) {
+  if (!val) return '';
+  const key = val.toLowerCase().replace(/[\s-]/g,'_');
+  const colour = STATUS_COLORS[key] || STATUS_COLORS[val.toLowerCase()] || 'grey';
+  return `<span class="badge badge-${colour}">${escHtml(val)}</span>`;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Score bar renderer ──────────────────────────────────────────────────────
+function scoreBar(val) {
+  const n = parseFloat(val);
+  if (isNaN(n)) return escHtml(val);
+  const pct = Math.max(0, Math.min(100, n));
+  return `<div class="score-bar-wrap" title="${n}">
+    <div class="score-bar"><div class="score-bar-fill" style="width:${pct}%"></div></div>
+    <span class="score-val">${n.toFixed(0)}</span>
+  </div>`;
+}
+
+// ── Report type configs ─────────────────────────────────────────────────────
+// detect(headers): returns true if this config matches
+// cols: columns to show by default (others hidden but toggleable)
+// statusField: which column to badge/colour and populate the status filter
+// scoreFields: columns rendered as score bars
+// monoFields: monospace columns
+// numFields: right-aligned numeric columns
+// wrapFields: allow text wrap
+
+const REPORT_CONFIGS = [
+  {
+    id: 'anjuna_lookup',
+    name: 'Anjuna MB Lookup',
+    filePattern: /^anjuna_lookup_/i,
+    detect: h => h.includes('extracted_catno') && h.includes('catno_score'),
+    cols: ['folder','extracted_catno','status','mb_title','mb_artist','mb_date','combined_score','notes'],
+    statusField: 'status',
+    scoreFields: ['catno_score','meta_score','combined_score'],
+    numFields: ['local_tracks','mb_tracks','candidates'],
+    monoFields: ['mbid','mb_catnos'],
+    wrapFields: ['notes'],
+  },
+  {
+    id: 'mb_lookup',
+    name: 'MB Lookup',
+    filePattern: /^(mb_lookup|tiesto_lookup)_/i,
+    detect: h => h.includes('parsed_artist') && h.includes('search_method') && !h.includes('catno_score'),
+    cols: ['folder','parsed_artist','parsed_title','status','mb_title','mb_artist','mb_date','combined_score','notes'],
+    statusField: 'status',
+    scoreFields: ['search_score','meta_score','combined_score'],
+    numFields: ['local_tracks','mb_tracks','candidates','track_match_pct'],
+    monoFields: ['mbid','mb_catnos'],
+    wrapFields: ['notes'],
+  },
+  {
+    id: 'tagger',
+    name: 'Tagger',
+    filePattern: /^(mb_tagger|anjuna_tagger)_/i,
+    detect: h => h.includes('files_tagged') && h.includes('new_folder'),
+    cols: ['folder','status','new_folder','files_tagged','notes'],
+    statusField: 'status',
+    numFields: ['files_tagged'],
+    monoFields: ['mbid'],
+    wrapFields: ['notes'],
+  },
+  {
+    id: 'tagger_undo',
+    name: 'Tagger Undo',
+    filePattern: /^tagger_undo_/i,
+    detect: h => h.includes('original_folder') && h.includes('tagged_folder'),
+    cols: ['original_folder','tagged_folder','status','notes'],
+    statusField: 'status',
+    wrapFields: ['notes'],
+  },
+  {
+    id: 'duplicates',
+    name: 'Duplicates Report',
+    filePattern: /^find_music_duplicates_/i,
+    detect: h => h.includes('Unsorted Path') && h.includes('Match Method'),
+    cols: ['Category','Action','Match Method','Unsorted Path','Unsorted Size','Unsorted Bitrate','Match Path','Match Size','Why Not Exact'],
+    statusField: 'Action',
+    wrapFields: ['Why Not Exact'],
+    monoFields: ['Unsorted Path','Match Path'],
+    customRender: 'duplicates',
+  },
+  {
+    id: 'scan_filenames',
+    name: 'Filename Scan',
+    filePattern: /^scan_music_filenames_/i,
+    detect: h => h.includes('Issue Count'),
+    cols: ['Folder','Filename','Issues','Issue Count'],
+    statusField: 'Issue Count',
+    numFields: ['Issue Count'],
+    wrapFields: ['Issues'],
+  },
+  {
+    id: 'fix_featuring',
+    name: 'Fix Featuring',
+    filePattern: /^fix_featuring_/i,
+    detect: h => h.includes('original_artist') && h.includes('new_artist'),
+    cols: ['file_path','original_artist','new_artist','original_title','new_title','status','notes'],
+    statusField: 'status',
+    wrapFields: ['notes'],
+  },
+  {
+    id: 'rename_catno',
+    name: 'Rename to CatNo',
+    filePattern: /^rename_to_catno_/i,
+    detect: h => h.includes('original_name') && h.includes('new_name') && h.includes('catno'),
+    cols: ['folder_path','original_name','new_name','catno','status','notes'],
+    statusField: 'status',
+    wrapFields: ['notes'],
+  },
+  {
+    id: 'music_integrity',
+    name: 'Music Integrity',
+    filePattern: /^check_music_integrity_/i,
+    detect: h => h.includes('vbr_status'),
+    cols: ['file_path','format','overall_status','vbr_status','vbr_details','integrity_status','integrity_details'],
+    statusField: 'overall_status',
+    wrapFields: ['vbr_details','integrity_details'],
+  },
+  {
+    id: 'clean_album',
+    name: 'Clean Album Folders',
+    filePattern: /^clean_album_folders_/i,
+    detect: h => h.includes('Extension') && h.includes('Action') && h.includes('Reason') && !h.includes('Issues'),
+    cols: ['File','Extension','Action','Reason','Status'],
+    statusField: 'Status',
+    wrapFields: ['Reason'],
+  },
+  {
+    id: 'sort_albums',
+    name: 'Sort Albums to Artists',
+    filePattern: /^sort_albums_to_artists_/i,
+    detect: h => h.includes('Album Folder') && h.includes('Artist') && h.includes('Destination'),
+    cols: ['Album Folder','Artist','Destination','Status'],
+    statusField: 'Status',
+    wrapFields: ['Destination'],
+  },
+  {
+    id: 'sort_cd_tracks',
+    name: 'Sort CD Tracks',
+    filePattern: /^sort_cd_tracks_/i,
+    detect: h => h.includes('Filename') && h.includes('Disc Number') && h.includes('Destination Folder'),
+    cols: ['Filename','Disc Number','Destination Folder','Status'],
+    statusField: 'Status',
+    wrapFields: ['Destination Folder'],
+  },
+  {
+    id: 'flac_to_cue',
+    name: 'FLAC to CUE',
+    filePattern: /^flac_to_cue_/i,
+    detect: h => h.includes('audio_filename') && h.includes('cue_path'),
+    cols: ['audio_filename','audio_format','disc_number','album','artist','track_count','mbid_source','status','notes','cue_path'],
+    statusField: 'status',
+    numFields: ['track_count','disc_number'],
+    monoFields: ['mbid','audio_format','disc_number'],
+    wrapFields: ['notes','cue_path'],
+  },
+  {
+    id: 'rename_album_folders',
+    name: 'Rename Album Folders',
+    filePattern: /^rename_album_folders_/i,
+    detect: h => h.includes('Current Name') && h.includes('Album Tag'),
+    cols: ['Relative Path','Current Name','New Name','Album Tag','Status','Files','Multi-CD'],
+    statusField: 'Status',
+    numFields: ['Files'],
+    wrapFields: ['Relative Path'],
+  },
+  {
+    id: 'rename_cd_folders',
+    name: 'Rename CD Folders',
+    filePattern: /^rename_cd_folders_/i,
+    detect: h => h.includes('Parent Folder') && h.includes('Original Name') && h.includes('New Name'),
+    cols: ['Parent Folder','Original Name','New Name','Status'],
+    statusField: 'Status',
+    wrapFields: ['Parent Folder'],
+  },
+  {
+    id: 'rename_undo',
+    name: 'Rename Undo',
+    filePattern: /^rename_undo_/i,
+    detect: h => h.includes('original_path') && h.includes('restored_name'),
+    cols: ['original_path','restored_name','status','notes'],
+    statusField: 'status',
+    wrapFields: ['notes'],
+  },
+  {
+    id: 'check_audio_tags',
+    name: 'Audio Tag Check',
+    filePattern: /^check_audio_tags_/i,
+    detect: h => h.includes('Bad acoustid_id') && h.includes('Bad acoustid_fingerprint'),
+    cols: ['Path', 'Issue', 'Bad acoustid_id', 'ID Error Detail', 'Bad acoustid_fingerprint', 'FP Error Detail', 'Read Error', 'Action'],
+    statusField: 'Issue',
+    wrapFields: ['Path', 'Bad acoustid_fingerprint', 'FP Error Detail', 'Read Error'],
+    tabs: [
+      { label: 'Bad ID',          statuses: ['bad_acoustid_id'] },
+      { label: 'Bad Fingerprint', statuses: ['bad_acoustid_fingerprint'] },
+      { label: 'Both',            statuses: ['bad_acoustid_id + bad_acoustid_fingerprint'] },
+      { label: 'Read Errors',     statuses: ['read_error'] },
+      { label: 'All',             statuses: [] },
+    ],
+  },
+  {
+    id: 'library_dupes',
+    name: 'Library Dupes',
+    filePattern: /^library_dupes_/i,
+    detect: h => h.includes('File A - Filename') && h.includes('Match Method'),
+    cols: null,
+    statusField: null,
+    customRender: 'library_dupes',
+  },
+  {
+    id: 'scan_progress',
+    name: 'Scan Progress',
+    filePattern: /^scan_progress_/i,
+    detect: h => h.includes('Total Flagged') && h.includes('Fixed Since Previous'),
+    cols: null,
+    statusField: null,
+    customRender: 'scan_progress',
+  },
+  {
+    id: 'rename_music_files',
+    name: 'Rename Music Files',
+    filePattern: /^rename_music_files_/i,
+    detect: h => h.includes('original_name') && h.includes('new_name') && h.includes('missing_tags') && h.includes('kbps'),
+    cols: ['status', 'original_name', 'new_name', 'title', 'artist', 'album', 'track', 'year', 'format', 'kbps', 'missing_tags', 'original_path'],
+    statusField: 'status',
+    numFields: ['track', 'kbps'],
+    monoFields: ['format'],
+    wrapFields: ['original_path'],
+    tabs: [
+      { label: 'To Review', statuses: ['would_rename'] },
+      { label: 'Good',      statuses: ['already_correct', 'renamed'] },
+      { label: 'Skipped',   statuses: ['skipped'] },
+      { label: 'Issues',    statuses: ['collision', 'error'] },
+      { label: 'All',       statuses: [] },
+    ],
+  },
+  {
+    id: 'generic',
+    name: 'Report',
+    detect: () => true,  // fallback — always matches
+    cols: null,           // null = show all
+    statusField: null,
+    wrapFields: [],
+  },
+];
+
+function detectConfig(headers, filename) {
+  // 1. Try filename prefix — unambiguous and fast
+  if (filename) {
+    const name = filename.toLowerCase();
+    for (const cfg of REPORT_CONFIGS) {
+      if (cfg.filePattern && cfg.filePattern.test(name)) return cfg;
+    }
+  }
+  // 2. Fall back to column-header detection (handles renamed files / manual exports)
+  for (const cfg of REPORT_CONFIGS) {
+    if (cfg.detect && cfg.detect(headers)) return cfg;
+  }
+  return REPORT_CONFIGS[REPORT_CONFIGS.length - 1]; // generic
+}
+
+// ── State ───────────────────────────────────────────────────────────────────
+let state = {
+  allData: [],
+  headers: [],
+  config: null,
+  fileName: '',
+  visibleCols: [],
+  sortCol: null,
+  sortAsc: true,
+  filterStatus: '',
+  searchQuery: '',
+  page: 0,
+  pageSize: 100,
+  filtered: [],
+  colWidths: {},
+  activeTabStatuses: null,  // null = no tab mode; [] = all; ['x','y'] = filter these
+};
+
+// ── Column width management ──────────────────────────────────────────────────
+function updateColgroup() {
+  const cg = document.getElementById('data-colgroup');
+  cg.innerHTML = '';
+  for (const col of state.visibleCols) {
+    const el = document.createElement('col');
+    if (state.colWidths[col]) el.style.width = state.colWidths[col] + 'px';
+    cg.appendChild(el);
+  }
+}
+
+function captureColWidths() {
+  // Only measure columns that don't yet have a stored width
+  const needsCapture = state.visibleCols.some(c => !state.colWidths[c]);
+  if (!needsCapture) { updateColgroup(); return; }
+
+  const table = document.getElementById('data-table');
+  // Temporarily revert to auto layout to read browser-natural widths
+  table.style.tableLayout = 'auto';
+  document.getElementById('data-colgroup').innerHTML = '';
+  table.offsetHeight; // force reflow
+
+  document.querySelectorAll('#table-head th').forEach((th, i) => {
+    const col = state.visibleCols[i];
+    if (col && !state.colWidths[col]) state.colWidths[col] = th.offsetWidth;
+  });
+
+  table.style.tableLayout = 'fixed';
+  updateColgroup();
+}
+
+// ── Render pipeline ─────────────────────────────────────────────────────────
+function applyFiltersAndSort() {
+  let rows = state.allData;
+
+  // Search
+  const q = state.searchQuery.toLowerCase();
+  if (q) {
+    rows = rows.filter(r =>
+      state.visibleCols.some(col => (r[col] || '').toLowerCase().includes(q))
+    );
+  }
+
+  // Tab filter (multi-status): takes precedence over the status dropdown
+  if (state.activeTabStatuses !== null && state.activeTabStatuses.length > 0) {
+    const sf = state.config && state.config.statusField;
+    if (sf) rows = rows.filter(r => state.activeTabStatuses.includes(r[sf] || ''));
+  } else if (state.activeTabStatuses === null && state.filterStatus) {
+    // Status dropdown filter — only active when not in tab mode
+    const sf = state.config && state.config.statusField;
+    if (sf) rows = rows.filter(r => (r[sf] || '') === state.filterStatus);
+  }
+
+  // Sort
+  if (state.sortCol) {
+    const col = state.sortCol, asc = state.sortAsc;
+    rows = [...rows].sort((a, b) => {
+      const va = a[col] || '', vb = b[col] || '';
+      const na = parseFloat(va), nb = parseFloat(vb);
+      if (!isNaN(na) && !isNaN(nb)) return asc ? na - nb : nb - na;
+      return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+  }
+
+  state.filtered = rows;
+}
+
+function getPage() {
+  if (state.pageSize === 0) return state.filtered;
+  const start = state.page * state.pageSize;
+  return state.filtered.slice(start, start + state.pageSize);
+}
+
+function renderTable() {
+  applyFiltersAndSort();
+  updateColgroup();
+
+  // Clamp page
+  const totalPages = state.pageSize === 0 ? 1 : Math.max(1, Math.ceil(state.filtered.length / state.pageSize));
+  if (state.page >= totalPages) state.page = totalPages - 1;
+
+  const cfg = state.config;
+  const scoreFields = new Set(cfg && cfg.scoreFields || []);
+  const monoFields  = new Set(cfg && cfg.monoFields  || []);
+  const numFields   = new Set(cfg && cfg.numFields   || []);
+  const wrapFields  = new Set(cfg && cfg.wrapFields  || []);
+  const statusField = cfg && cfg.statusField;
+
+  // Header
+  const thead = document.getElementById('table-head');
+  thead.innerHTML = '';
+  const tr = document.createElement('tr');
+  for (const col of state.visibleCols) {
+    const th = document.createElement('th');
+    th.textContent = col;
+    th.tabIndex = 0;
+    th.setAttribute('aria-label', `Sort by ${col}`);
+    if (state.sortCol === col) th.className = state.sortAsc ? 'sorted-asc' : 'sorted-desc';
+    th.addEventListener('click', () => {
+      if (state.sortCol === col) state.sortAsc = !state.sortAsc;
+      else { state.sortCol = col; state.sortAsc = true; }
+      state.page = 0;
+      renderTable();
+    });
+    th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') th.click(); });
+
+    // Resize handle
+    const handle = document.createElement('div');
+    handle.className = 'col-resize-handle';
+    handle.setAttribute('aria-hidden', 'true');
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      e.stopPropagation(); // prevent sort trigger
+      const startX = e.clientX;
+      const startW = th.offsetWidth;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      handle.classList.add('resizing');
+      const onMove = ev => {
+        state.colWidths[col] = Math.max(40, startW + ev.clientX - startX);
+        updateColgroup();
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        handle.classList.remove('resizing');
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    th.appendChild(handle);
+
+    tr.appendChild(th);
+  }
+  thead.appendChild(tr);
+
+  // Body
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+  const pageRows = getPage();
+
+  for (const row of pageRows) {
+    const tr = document.createElement('tr');
+    for (const col of state.visibleCols) {
+      const td = document.createElement('td');
+      const raw = row[col] || '';
+
+      if (col === statusField && statusField) {
+        td.innerHTML = statusBadge(raw);
+      } else if (scoreFields.has(col)) {
+        td.innerHTML = scoreBar(raw);
+        td.style.padding = '6px 8px';
+      } else if (monoFields.has(col)) {
+        td.className = 'mono';
+        td.textContent = raw;
+      } else if (numFields.has(col)) {
+        td.className = 'num';
+        td.textContent = raw;
+      } else if (wrapFields.has(col)) {
+        td.className = 'wrap';
+        td.textContent = raw;
+      } else {
+        td.textContent = raw;
+      }
+
+      td.title = raw.length > 40 ? raw : '';
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+
+  // Row count
+  const total = state.allData.length;
+  const shown = state.filtered.length;
+  document.getElementById('row-count').textContent =
+    shown === total ? `${total.toLocaleString()} rows` : `${shown.toLocaleString()} of ${total.toLocaleString()} rows`;
+
+  // Pagination
+  renderPagination(totalPages);
+}
+
+function renderPagination(totalPages) {
+  const info = document.getElementById('page-info');
+  const btns = document.getElementById('page-btns');
+
+  if (state.pageSize === 0 || totalPages <= 1) {
+    info.textContent = '';
+    btns.innerHTML = '';
+    return;
+  }
+
+  const start = state.page * state.pageSize + 1;
+  const end = Math.min((state.page + 1) * state.pageSize, state.filtered.length);
+  info.textContent = `Rows ${start}–${end} of ${state.filtered.length}`;
+
+  btns.innerHTML = '';
+  const mkBtn = (label, pg, disabled) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.disabled = disabled;
+    b.setAttribute('aria-label', `Page ${label}`);
+    if (pg === state.page) b.className = 'active';
+    b.addEventListener('click', () => { state.page = pg; renderTable(); });
+    return b;
+  };
+
+  btns.appendChild(mkBtn('‹', state.page - 1, state.page === 0));
+
+  const range = pageRange(state.page, totalPages);
+  let prev = null;
+  for (const pg of range) {
+    if (prev !== null && pg > prev + 1) {
+      const sep = document.createElement('button');
+      sep.textContent = '…'; sep.disabled = true;
+      btns.appendChild(sep);
+    }
+    btns.appendChild(mkBtn(pg + 1, pg, false));
+    prev = pg;
+  }
+
+  btns.appendChild(mkBtn('›', state.page + 1, state.page === totalPages - 1));
+}
+
+function pageRange(cur, total) {
+  const pages = new Set([0, total - 1, cur, cur - 1, cur + 1].filter(p => p >= 0 && p < total));
+  return Array.from(pages).sort((a,b) => a-b);
+}
+
+// ── Tab bar ─────────────────────────────────────────────────────────────────
+function renderTabs() {
+  const bar = document.getElementById('tab-bar');
+  const cfg = state.config;
+
+  if (!cfg || !cfg.tabs || !cfg.tabs.length) {
+    bar.style.display = 'none';
+    state.activeTabStatuses = null;
+    return;
+  }
+
+  bar.style.display = 'flex';
+  bar.innerHTML = '';
+
+  // Count rows per tab so the badges show real numbers
+  const sf = cfg.statusField;
+  const countFor = statuses => {
+    if (!statuses.length) return state.allData.length;
+    return state.allData.filter(r => statuses.includes(r[sf] || '')).length;
+  };
+
+  cfg.tabs.forEach((tab, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn';
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', 'false');
+
+    const n = countFor(tab.statuses);
+    btn.innerHTML = `${escHtml(tab.label)}<span class="tab-count">${n.toLocaleString()}</span>`;
+
+    // Select first tab by default on initial render; keep existing selection on re-render
+    const isActive = state.activeTabStatuses !== null
+      ? JSON.stringify(state.activeTabStatuses) === JSON.stringify(tab.statuses)
+      : i === 0;
+
+    if (isActive) {
+      btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
+      state.activeTabStatuses = tab.statuses;
+    }
+
+    btn.addEventListener('click', () => {
+      state.activeTabStatuses = tab.statuses;
+      state.page = 0;
+      renderTable();
+      // Update active class
+      bar.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
+      btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
+    });
+
+    bar.appendChild(btn);
+  });
+}
+
+
+// ── Status filter population ────────────────────────────────────────────────
+function populateStatusFilter() {
+  const sel = document.getElementById('status-filter');
+  sel.innerHTML = '<option value="">All statuses</option>';
+  const cfg = state.config;
+
+  // Hide the dropdown entirely when the config uses tabs
+  if (cfg && cfg.tabs && cfg.tabs.length) {
+    sel.style.display = 'none';
+    return;
+  }
+
+  const sf = cfg && cfg.statusField;
+  if (!sf) { sel.style.display = 'none'; return; }
+  sel.style.display = '';
+  const vals = [...new Set(state.allData.map(r => r[sf] || '').filter(Boolean))].sort();
+  for (const v of vals) {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = v;
+    sel.appendChild(opt);
+  }
+}
+
+// ── Column toggle panel ─────────────────────────────────────────────────────
+function populateColPanel() {
+  const box = document.getElementById('col-checkboxes');
+  box.innerHTML = '';
+  for (const col of state.headers) {
+    const id = 'col-' + col.replace(/\W/g,'_');
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = id;
+    cb.checked = state.visibleCols.includes(col);
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        // Insert at original position
+        const ordered = state.headers.filter(h => state.visibleCols.includes(h) || h === col);
+        state.visibleCols = ordered;
+      } else {
+        state.visibleCols = state.visibleCols.filter(c => c !== col);
+      }
+      state.page = 0;
+      renderTable();
+      requestAnimationFrame(captureColWidths); // capture width for newly-added columns
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(' ' + col));
+    box.appendChild(label);
+  }
+}
+
+// ── Load CSV ────────────────────────────────────────────────────────────────
+function loadCSV(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const { headers, data } = parseCSV(e.target.result);
+    if (!headers.length) { alert('Could not parse this file — no headers found.'); return; }
+
+    const cfg = detectConfig(headers, file.name);
+    const defaultCols = cfg.cols ? cfg.cols.filter(c => headers.includes(c)) : headers;
+
+    state.allData          = data;
+    state.headers          = headers;
+    state.config           = cfg;
+    state.fileName         = file.name;
+    state.visibleCols      = defaultCols.length ? defaultCols : headers;
+    state.sortCol          = null;
+    state.sortAsc          = true;
+    state.filterStatus     = '';
+    state.searchQuery      = '';
+    state.page             = 0;
+    state.filtered         = [];
+    state.activeTabStatuses = null;  // reset; renderTabs() will set to first tab if tabs exist
+
+    // Update UI labels
+    document.getElementById('report-type-label').textContent = cfg.name;
+    document.getElementById('report-type-label').style.display = '';
+    document.title = `${cfg.name} — ${file.name}`;
+    document.getElementById('app-header').querySelector('h1').textContent = `🎵 ${file.name}`;
+
+    // Common show/hide
+    document.getElementById('drop-zone').style.display       = 'none';
+    document.getElementById('controls').style.display        = 'flex';
+    document.getElementById('header-open-btn').style.display = 'none';
+    document.getElementById('search-box').value   = '';
+    document.getElementById('status-filter').value = '';
+
+    // Reset any custom-render overrides from a previous load
+    document.getElementById('search-box').style.display      = '';
+    document.getElementById('col-toggle-btn').style.display  = '';
+    document.getElementById('export-btn').style.display      = '';
+    document.getElementById('row-count').style.display       = '';
+
+    if (cfg.customRender) {
+      // Custom render mode
+      document.getElementById('table-wrapper').style.display  = 'none';
+      document.getElementById('footer').style.display         = 'none';
+      document.getElementById('custom-wrapper').style.display = 'block';
+      document.getElementById('col-toggle-btn').style.display  = 'none';
+      document.getElementById('export-btn').style.display     = 'none';
+      document.getElementById('status-filter').style.display  = 'none';
+      document.getElementById('dup-dec-panel').style.display  = 'none';
+      document.getElementById('ld-dec-panel').style.display   = 'none';
+
+      if (cfg.customRender === 'scan_progress') {
+        document.getElementById('search-box').style.display   = 'none';
+        document.getElementById('row-count').textContent = `${data.length} scan${data.length !== 1 ? 's' : ''}`;
+        renderScanProgress(data);
+      } else if (cfg.customRender === 'duplicates') {
+        // Search box stays visible -- it filters the dup table
+        dup_decisions = {}; dup_activeTiers.clear();
+        dup_catFilter = dup_methodFilter = dup_actionFilter = '';
+        state.searchQuery = ''; document.getElementById('search-box').value = '';
+        renderDupView(data);
+      } else if (cfg.customRender === 'library_dupes') {
+        // Search box stays visible -- it filters the ld view
+        ld_decisions = {}; ld_activeMethods.clear();
+        ld_currentView = 'pairs';
+        state.searchQuery = ''; document.getElementById('search-box').value = '';
+        ldRenderView(data);
+      }
+    } else {
+      // Standard table render mode
+      document.getElementById('table-wrapper').style.display  = 'block';
+      document.getElementById('footer').style.display         = 'flex';
+      document.getElementById('custom-wrapper').style.display = 'none';
+      document.getElementById('dup-dec-panel').style.display  = 'none';
+      document.getElementById('ld-dec-panel').style.display   = 'none';
+      renderTabs();
+      populateStatusFilter();
+      populateColPanel();
+      // Reset column widths and render naturally, then capture + fix
+      state.colWidths = {};
+      const tbl = document.getElementById('data-table');
+      tbl.style.tableLayout = 'auto';
+      document.getElementById('data-colgroup').innerHTML = '';
+      renderTable();
+      requestAnimationFrame(captureColWidths);
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+// ── Export filtered CSV ─────────────────────────────────────────────────────
+function exportCSV() {
+  const cols = state.visibleCols;
+  const rows = state.filtered;
+  const lines = [cols.map(c => `"${c.replace(/"/g,'""')}"`).join(',')];
+  for (const row of rows) {
+    lines.push(cols.map(c => {
+      const v = row[c] || '';
+      return v.includes(',') || v.includes('"') || v.includes('\n')
+        ? `"${v.replace(/"/g,'""')}"`
+        : v;
+    }).join(','));
+  }
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `export_${Date.now()}.csv`;
+  a.click();
+}
+
+// ── Scan Progress dashboard ─────────────────────────────────────────────────
+const SP_ISSUE_COLS = [
+  'Underscores','Bracket underscores','Double spaces','Junk characters',
+  'Dots','Dash spacing','All caps','Lowercase','Mixed separators',
+];
+const SP_ISSUE_COLORS = [
+  '#7c3aed','#ec4899','#f59e0b','#d97706',
+  '#10b981','#06b6d4','#ef4444','#8b5cf6','#3b82f6',
+];
+
+function renderScanProgress(rows) {
+  const wrap = document.getElementById('custom-wrapper');
+  wrap.innerHTML = '';
+
+  if (!rows.length) {
+    wrap.innerHTML = '<p style="padding:20px;color:var(--text-muted)">No scan data found.</p>';
+    return;
+  }
+
+  const first = rows[0], last = rows[rows.length - 1];
+  const firstTotal = parseInt(first['Total Flagged']) || 0;
+  const lastTotal  = parseInt(last['Total Flagged'])  || 0;
+  const diff  = lastTotal - firstTotal;
+  const pct   = firstTotal ? Math.round(diff / firstTotal * 100) : 0;
+  const sign  = diff > 0 ? '+' : '';
+  let totalFixed = 0, totalNew = 0;
+  rows.slice(1).forEach(r => {
+    totalFixed += parseInt(r['Fixed Since Previous']) || 0;
+    totalNew   += parseInt(r['New Issues Since Previous']) || 0;
+  });
+
+  const latestCardClass = lastTotal < firstTotal ? 'sp-card-green'
+    : lastTotal > firstTotal ? 'sp-card-red' : 'sp-card-blue';
+
+  // ── Summary cards ──────────────────────────────────────────────────────────
+  const cardsHtml = `<div class="sp-cards">
+    <div class="sp-card sp-card-purple">
+      <div class="sp-card-label">Scans analysed</div>
+      <div class="sp-card-value">${rows.length}</div>
+      <div class="sp-card-sub">${escHtml(first['Scan Date'] || '')} → ${escHtml(last['Scan Date'] || '')}</div>
+    </div>
+    <div class="sp-card sp-card-blue">
+      <div class="sp-card-label">First scan</div>
+      <div class="sp-card-value">${firstTotal.toLocaleString()}</div>
+      <div class="sp-card-sub">flagged files</div>
+    </div>
+    <div class="sp-card ${latestCardClass}">
+      <div class="sp-card-label">Latest scan</div>
+      <div class="sp-card-value">${lastTotal.toLocaleString()}</div>
+      <div class="sp-card-sub">${sign}${diff.toLocaleString()} (${sign}${pct}%)</div>
+    </div>
+    <div class="sp-card sp-card-green">
+      <div class="sp-card-label">Total fixed</div>
+      <div class="sp-card-value">${totalFixed.toLocaleString()}</div>
+      <div class="sp-card-sub">across all scans</div>
+    </div>
+    <div class="sp-card sp-card-red">
+      <div class="sp-card-label">Total new issues</div>
+      <div class="sp-card-value">${totalNew.toLocaleString()}</div>
+      <div class="sp-card-sub">across all scans</div>
+    </div>
+  </div>`;
+
+  // ── Chart section ──────────────────────────────────────────────────────────
+  const chartHtml = `<div class="sp-chart-section">
+    <div class="sp-chart-title">Flagged files over time</div>
+    <div class="sp-chart-wrap"><canvas id="sp-trend-chart"></canvas></div>
+  </div>`;
+
+  // ── Issue breakdown table ──────────────────────────────────────────────────
+  const maxFirst = Math.max(...SP_ISSUE_COLS.map(c => parseInt(first[c]) || 0), 1);
+  let issueTbody;
+  if (rows.length < 2) {
+    issueTbody = '<tr><td colspan="5" class="sp-no-data">Need at least 2 scans to show a comparison.</td></tr>';
+  } else {
+    issueTbody = SP_ISSUE_COLS.map((col, ci) => {
+      const fVal = parseInt(first[col]) || 0;
+      const lVal = parseInt(last[col])  || 0;
+      if (fVal === 0 && lVal === 0) return '';
+      const chg = lVal - fVal;
+      const chgSign = chg > 0 ? '+' : '';
+      const chgClass = chg > 0 ? 'sp-chg-pos' : chg < 0 ? 'sp-chg-neg' : 'sp-chg-zero';
+      const barW = Math.round((fVal / maxFirst) * 160);
+      const barColor = SP_ISSUE_COLORS[ci % SP_ISSUE_COLORS.length];
+      const pctFixed = fVal > 0 ? `${Math.round((1 - lVal / fVal) * 100)}% fixed` : '';
+      return `<tr>
+        <td>${escHtml(col)}</td>
+        <td class="sp-num">${fVal.toLocaleString()}</td>
+        <td class="sp-num">${lVal.toLocaleString()}</td>
+        <td class="sp-num ${chgClass}">${chgSign}${chg.toLocaleString()}</td>
+        <td><div class="sp-bar-cell">
+          <div class="sp-bar" style="width:${barW}px;background:${barColor}"></div>
+          <span class="sp-bar-text">${pctFixed}</span>
+        </div></td>
+      </tr>`;
+    }).filter(Boolean).join('');
+  }
+
+  const issueHtml = `<div class="sp-section-title">Issue breakdown — first vs latest scan</div>
+  <div class="sp-table-wrap"><table class="sp-table">
+    <thead><tr>
+      <th>Issue type</th>
+      <th class="sp-num">First scan</th>
+      <th class="sp-num">Latest scan</th>
+      <th class="sp-num">Change</th>
+      <th style="min-width:200px">Progress</th>
+    </tr></thead>
+    <tbody>${issueTbody}</tbody>
+  </table></div>`;
+
+  // ── History table ──────────────────────────────────────────────────────────
+  const historyRows = rows.map(r => {
+    const total  = parseInt(r['Total Flagged']) || 0;
+    const fixed  = r['Fixed Since Previous'];
+    const newIss = r['New Issues Since Previous'];
+    const net    = r['Net Change'];
+    const fixedHtml = (!fixed || fixed === '—')
+      ? '<span class="sp-chg-zero">—</span>'
+      : `<span class="sp-chg-neg">-${parseInt(fixed).toLocaleString()}</span>`;
+    const newHtml = (!newIss || newIss === '—')
+      ? '<span class="sp-chg-zero">—</span>'
+      : `<span class="sp-chg-pos">+${parseInt(newIss).toLocaleString()}</span>`;
+    const netNum = parseInt(net);
+    const netHtml = isNaN(netNum) ? '<span class="sp-chg-zero">—</span>'
+      : netNum === 0 ? '<span class="sp-chg-zero">0</span>'
+      : netNum < 0   ? `<span class="sp-chg-neg">${netNum.toLocaleString()}</span>`
+      :                `<span class="sp-chg-pos">+${netNum.toLocaleString()}</span>`;
+    return `<tr>
+      <td>${escHtml(r['Scan Date'] || '')}</td>
+      <td class="sp-num">${total.toLocaleString()}</td>
+      <td class="sp-num">${fixedHtml}</td>
+      <td class="sp-num">${newHtml}</td>
+      <td class="sp-num">${netHtml}</td>
+    </tr>`;
+  }).join('');
+
+  const historyHtml = `<div class="sp-section-title">Scan history</div>
+  <div class="sp-table-wrap"><table class="sp-table">
+    <thead><tr>
+      <th>Scan date</th>
+      <th class="sp-num">Total flagged</th>
+      <th class="sp-num">Fixed</th>
+      <th class="sp-num">New issues</th>
+      <th class="sp-num">Net change</th>
+    </tr></thead>
+    <tbody>${historyRows}</tbody>
+  </table></div>`;
+
+  wrap.innerHTML = cardsHtml + chartHtml + issueHtml + historyHtml;
+
+  // Draw the canvas chart after the DOM is painted
+  requestAnimationFrame(() => drawSpChart(rows));
+}
+
+function drawSpChart(rows) {
+  const canvas = document.getElementById('sp-trend-chart');
+  if (!canvas) return;
+  const ctx  = canvas.getContext('2d');
+  const wrap = canvas.parentElement;
+
+  const W = wrap.offsetWidth || 800;
+  const H = 200;
+  canvas.width  = Math.round(W * devicePixelRatio);
+  canvas.height = Math.round(H * devicePixelRatio);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+
+  // Pick colors to match the current theme
+  const isDark     = document.documentElement.getAttribute('data-theme') === 'dark';
+  const accentLine = isDark ? '#3b82f6' : '#2563eb';
+  const fill0      = isDark ? 'rgba(59,130,246,0.22)' : 'rgba(37,99,235,0.18)';
+  const fill1      = 'rgba(37,99,235,0.02)';
+  const gridColor  = isDark ? '#374151' : '#e0e0e0';
+  const labelColor = isDark ? '#9ca3af' : '#666666';
+  const dotInner   = isDark ? '#111827' : '#ffffff';
+
+  const PAD = { top: 24, right: 20, bottom: 36, left: 60 };
+  const cW  = W - PAD.left - PAD.right;
+  const cH  = H - PAD.top  - PAD.bottom;
+
+  const totals = rows.map(r => parseInt(r['Total Flagged']) || 0);
+  const labels = rows.map(r => (r['Scan Date'] || '').substring(0, 10));
+  const maxVal = Math.max(...totals, 1);
+
+  // Grid lines + Y labels
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y   = PAD.top + cH - (i / 4) * cH;
+    const val = Math.round((i / 4) * maxVal);
+    ctx.strokeStyle = gridColor;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cW, y); ctx.stroke();
+    ctx.fillStyle  = labelColor;
+    ctx.font       = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign  = 'right';
+    ctx.fillText(val.toLocaleString(), PAD.left - 8, y + 4);
+  }
+
+  // X labels
+  const step  = rows.length > 1 ? cW / (rows.length - 1) : cW;
+  const every = Math.ceil(rows.length / 8);
+  labels.forEach((label, i) => {
+    if (i % every === 0 || i === rows.length - 1) {
+      const x = PAD.left + (rows.length > 1 ? i * step : cW / 2);
+      ctx.fillStyle = labelColor;
+      ctx.font      = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(label, x, H - PAD.bottom + 14);
+    }
+  });
+
+  const points = totals.map((v, i) => ({
+    x: PAD.left + (rows.length > 1 ? i * step : cW / 2),
+    y: PAD.top  + cH - (v / maxVal) * cH,
+  }));
+  if (!points.length) return;
+
+  // Gradient fill under line
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, PAD.top + cH);
+  points.forEach(p => ctx.lineTo(p.x, p.y));
+  ctx.lineTo(points[points.length - 1].x, PAD.top + cH);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + cH);
+  grad.addColorStop(0, fill0); grad.addColorStop(1, fill1);
+  ctx.fillStyle = grad; ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.strokeStyle = accentLine; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+  points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+  ctx.stroke();
+
+  // Dots
+  points.forEach(p => {
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = accentLine; ctx.fill();
+    ctx.strokeStyle = dotInner; ctx.lineWidth = 2; ctx.stroke();
+  });
+
+  // Value labels on first and last point
+  if (points.length >= 2) {
+    ctx.fillStyle = accentLine;
+    ctx.font = 'bold 12px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(totals[0].toLocaleString(), points[0].x, points[0].y - 10);
+    ctx.fillText(totals[totals.length - 1].toLocaleString(),
+      points[points.length - 1].x, points[points.length - 1].y - 10);
+  }
+}
+
+// ── Duplicates Decisions View ────────────────────────────────────────────────
+let dup_allRows = [], dup_decisions = {}, dup_activeTiers = new Set();
+let dup_catFilter = '', dup_methodFilter = '', dup_actionFilter = '';
+let dup_toastTimer;
+
+const DUP_CAT_COLORS = {
+  'Exact Match':          'badge-green',
+  'DUPLICATE':            'badge-blue',
+  'Standard Duplicate':   'badge-blue',
+  'BETTER QUALITY':       'badge-amber',
+  'Higher Quality Match': 'badge-amber',
+};
+
+function dupRowKey(r) { return (r['Unsorted Path'] || '') + '||' + (r['Match Path'] || ''); }
+
+function isDupActionable(r) {
+  const c = r['Category'] || '';
+  return c === 'DUPLICATE' || c === 'Standard Duplicate' ||
+         c === 'BETTER QUALITY' || c === 'Higher Quality Match';
+}
+
+function fpTierOf(method) {
+  if (!(method || '').toLowerCase().includes('fingerprint')) return null;
+  const m = (method || '').match(/(\d+)%/);
+  if (!m) return null;
+  const pct = parseInt(m[1]);
+  return pct >= 95 ? 'high' : pct >= 90 ? 'medium' : 'low';
+}
+
+function dupFname(path) {
+  return path ? path.replace(/\\/g, '/').split('/').pop() : '';
+}
+
+function dupPathCell(path, bitrate, size, title, artist) {
+  if (!path) return '<span style="color:var(--text-muted)">—</span>';
+  const name = dupFname(path);
+  const meta = [bitrate, size].filter(Boolean).join(' · ');
+  const tags = [artist, title].filter(Boolean).join(' — ');
+  const abbr = path.length > 60 ? '…' + path.slice(-58) : path;
+  return `<div class="dup-path-cell">
+    <div class="dup-path-fname">${escHtml(name)}</div>
+    ${meta ? `<div class="dup-path-meta">${escHtml(meta)}</div>` : ''}
+    ${tags ? `<div class="dup-path-meta" style="font-style:italic">${escHtml(tags)}</div>` : ''}
+    <div style="font-size:10px;color:var(--border-dark);margin-top:2px;font-family:var(--font-mono)" title="${escHtml(path)}">${escHtml(abbr)}</div>
+  </div>`;
+}
+
+function dupMethodBadge(method) {
+  if (!method) return '<span style="color:var(--text-muted)">—</span>';
+  const tier = fpTierOf(method);
+  if (tier === 'high')   return `<span class="dup-badge-fp-high">${escHtml(method)}</span>`;
+  if (tier === 'medium') return `<span class="dup-badge-fp-med">${escHtml(method)}</span>`;
+  if (tier === 'low')    return `<span class="dup-badge-fp-low">${escHtml(method)}</span>`;
+  return `<span class="dup-badge-method">${escHtml(method)}</span>`;
+}
+
+function dupDiffCell(r) {
+  const parts = [];
+  const why  = r['Why Not Exact'];
+  const bDiff = r['Bitrate Diff (bps)'];
+  const sDiff = r['Size Diff (bytes)'];
+  if (why)   parts.push(`<div style="font-size:11px;color:var(--text-muted)">${escHtml(why)}</div>`);
+  if (bDiff && bDiff !== '0') parts.push(`<div style="font-size:11px;color:var(--text-muted)">BR diff: ${escHtml(bDiff)} bps</div>`);
+  if (sDiff && sDiff !== '0') parts.push(`<div style="font-size:11px;color:var(--text-muted)">Size: ${escHtml(sDiff)} B</div>`);
+  return parts.length ? parts.join('') : `<span style="color:var(--text-muted)">—</span>`;
+}
+
+function dupDecBtns(key, dec) {
+  const ua = dec && dec.choice === 'unsorted' ? ' dec-active' : '';
+  const la = dec && dec.choice === 'library'  ? ' dec-active' : '';
+  const sa = dec && dec.choice === 'skip'     ? ' dec-active' : '';
+  return `<div class="dup-dec-cell">
+    <button class="dup-dec-btn dup-keep-u${ua}" data-key="${escHtml(key)}" data-choice="unsorted">Keep unsorted</button>
+    <button class="dup-dec-btn dup-keep-l${la}" data-key="${escHtml(key)}" data-choice="library">Keep library</button>
+    <button class="dup-dec-btn dup-skip${sa}"   data-key="${escHtml(key)}" data-choice="skip">Skip</button>
+    ${dec ? `<span class="dup-dec-mark">✓ ${escHtml(dec.choice)}</span>` : ''}
+  </div>`;
+}
+
+function dupGetFiltered() {
+  const q = (state.searchQuery || '').toLowerCase();
+  return dup_allRows.filter(r => {
+    if (dup_catFilter    && r['Category']     !== dup_catFilter)    return false;
+    if (dup_methodFilter && r['Match Method'] !== dup_methodFilter) return false;
+    if (dup_actionFilter && r['Action']       !== dup_actionFilter) return false;
+    if (dup_activeTiers.size > 0) {
+      const tier = fpTierOf(r['Match Method']);
+      if (!tier || !dup_activeTiers.has(tier)) return false;
+    }
+    if (q) {
+      const hay = [r['Unsorted Path'],r['Match Path'],
+        r['Unsorted Title'],r['Unsorted Artist'],r['Match Title'],r['Match Artist']
+      ].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function buildDupTableHtml(rows) {
+  if (!rows.length) return '<div class="dup-no-rows">No rows match your filters.</div>';
+  return `<div class="dup-table-wrap"><table class="dup-table">
+    <thead><tr>
+      <th>Category</th><th>Method</th><th>Unsorted File</th>
+      <th>Library Match</th><th>Diff</th><th>Decision</th>
+    </tr></thead>
+    <tbody>${rows.map(r => {
+      const key = dupRowKey(r);
+      const dec = dup_decisions[key];
+      const cat = r['Category'] || '';
+      const badgeCls = DUP_CAT_COLORS[cat] || 'badge-grey';
+      return `<tr${dec ? ' class="dup-decided"' : ''}>
+        <td><span class="badge ${badgeCls}">${escHtml(cat)}</span></td>
+        <td>${dupMethodBadge(r['Match Method'])}</td>
+        <td>${dupPathCell(r['Unsorted Path'],r['Unsorted Bitrate'],r['Unsorted Size'],r['Unsorted Title'],r['Unsorted Artist'])}</td>
+        <td>${dupPathCell(r['Match Path'],r['Match Bitrate'],r['Match Size'],r['Match Title'],r['Match Artist'])}</td>
+        <td>${dupDiffCell(r)}</td>
+        <td>${isDupActionable(r) ? dupDecBtns(key, dec) : '<span style="color:var(--text-muted);font-size:11px">—</span>'}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+function renderDupFiltered() {
+  const rows = dupGetFiltered();
+  document.getElementById('row-count').textContent =
+    rows.length === dup_allRows.length
+      ? `${dup_allRows.length.toLocaleString()} rows`
+      : `${rows.length.toLocaleString()} of ${dup_allRows.length.toLocaleString()} rows`;
+  const inner = document.getElementById('dup-table-wrap-inner');
+  if (!inner) { renderDupView(dup_allRows); return; }
+  inner.innerHTML = buildDupTableHtml(rows);
+  updateDupDecPanel();
+}
+
+function renderDupView(rows) {
+  dup_allRows = rows;
+  const wrap = document.getElementById('custom-wrapper');
+  wrap.style.paddingBottom = '80px';  // room for fixed dec panel
+
+  // Category count pills
+  const catCounts = {};
+  rows.forEach(r => { catCounts[r['Category']] = (catCounts[r['Category']] || 0) + 1; });
+  const catPillsHtml = `<div class="dup-pills-bar" id="dup-cat-pills">
+    <div class="dup-cat-pill active" data-cat="">ALL <strong>${rows.length.toLocaleString()}</strong></div>
+    ${Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).map(([cat,count]) => {
+      const dotColor = { 'Exact Match':'var(--green-fg)','DUPLICATE':'var(--blue-fg)',
+        'Standard Duplicate':'var(--blue-fg)','BETTER QUALITY':'var(--amber-fg)',
+        'Higher Quality Match':'var(--amber-fg)' }[cat] || 'var(--text-muted)';
+      return `<div class="dup-cat-pill" data-cat="${escHtml(cat)}">
+        <span class="dup-cat-dot" style="background:${dotColor}"></span>
+        ${escHtml(cat)} <strong>${count.toLocaleString()}</strong>
+      </div>`;
+    }).join('')}
+  </div>`;
+
+  // FP tier pills
+  const tierCounts = { high: 0, medium: 0, low: 0 };
+  rows.forEach(r => { const t = fpTierOf(r['Match Method']); if (t) tierCounts[t]++; });
+  const hasFP = tierCounts.high + tierCounts.medium + tierCounts.low > 0;
+  const tierPillsHtml = hasFP ? `<div class="dup-pills-bar">
+    <span class="dup-tier-label">FP confidence:</span>
+    ${tierCounts.high   ? `<div class="dup-tier-pill dup-tier-high"   data-tier="high">High ≥95% (${tierCounts.high})</div>` : ''}
+    ${tierCounts.medium ? `<div class="dup-tier-pill dup-tier-medium" data-tier="medium">Medium 90–94% (${tierCounts.medium})</div>` : ''}
+    ${tierCounts.low    ? `<div class="dup-tier-pill dup-tier-low"    data-tier="low">Low 85–89% (${tierCounts.low})</div>` : ''}
+  </div>` : '';
+
+  // Dropdowns for method + action
+  const uniqMethod = [...new Set(rows.map(r => r['Match Method']).filter(Boolean))].sort();
+  const uniqAction = [...new Set(rows.map(r => r['Action']).filter(Boolean))].sort();
+  const mkOpts = vals => vals.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('');
+  const controlsHtml = `<div class="dup-controls-bar">
+    <select id="dup-method-sel" class="filter-select"><option value="">All methods</option>${mkOpts(uniqMethod)}</select>
+    <select id="dup-action-sel" class="filter-select"><option value="">All actions</option>${mkOpts(uniqAction)}</select>
+    <button class="btn" id="dup-clear-filters-btn">Clear filters</button>
+    <button class="btn dup-undo-cmd-btn" id="dup-undo-cmd-btn" title="Copy undo command to clipboard">📋 Copy undo command</button>
+  </div>`;
+
+  wrap.innerHTML = catPillsHtml + tierPillsHtml + controlsHtml +
+    `<div id="dup-table-wrap-inner">${buildDupTableHtml(rows)}</div>`;
+
+  // Wire category pills
+  wrap.querySelectorAll('[data-cat]').forEach(pill => {
+    pill.addEventListener('click', () => {
+      dup_catFilter = pill.dataset.cat;
+      wrap.querySelectorAll('[data-cat]').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      renderDupFiltered();
+    });
+  });
+
+  // Wire tier pills
+  wrap.querySelectorAll('[data-tier]').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const t = pill.dataset.tier;
+      if (dup_activeTiers.has(t)) { dup_activeTiers.delete(t); pill.classList.add('tier-inactive'); }
+      else { dup_activeTiers.add(t); pill.classList.remove('tier-inactive'); }
+      renderDupFiltered();
+    });
+  });
+
+  // Wire dropdowns
+  document.getElementById('dup-method-sel').addEventListener('change', e => {
+    dup_methodFilter = e.target.value; renderDupFiltered();
+  });
+  document.getElementById('dup-action-sel').addEventListener('change', e => {
+    dup_actionFilter = e.target.value; renderDupFiltered();
+  });
+  document.getElementById('dup-clear-filters-btn').addEventListener('click', () => {
+    dup_catFilter = dup_methodFilter = dup_actionFilter = '';
+    dup_activeTiers.clear();
+    state.searchQuery = ''; document.getElementById('search-box').value = '';
+    wrap.querySelectorAll('[data-cat]').forEach((p,i) => { p.classList.toggle('active', i === 0); });
+    wrap.querySelectorAll('[data-tier]').forEach(p => p.classList.remove('tier-inactive'));
+    document.getElementById('dup-method-sel').value = '';
+    document.getElementById('dup-action-sel').value = '';
+    renderDupFiltered();
+  });
+
+  document.getElementById('dup-undo-cmd-btn').addEventListener('click', () => {
+    const fname = state.fileName || 'report.csv';
+    const cmd = `python undo_duplicates.py "reports\\${fname}"`;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cmd).then(() => {
+        dupToast('📋 Copied! Run from duplicate_finder folder');
+      }).catch(() => {
+        dupToast('⚠ Copy failed — try again');
+      });
+    } else {
+      // Fallback for non-secure contexts
+      const ta = document.createElement('textarea');
+      ta.value = cmd; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); dupToast('📋 Copied! Run from duplicate_finder folder'); }
+      catch { dupToast('⚠ Copy failed — try again'); }
+      document.body.removeChild(ta);
+    }
+  });
+
+  // Decision button delegation (persists across innerHTML redraws on the inner div)
+  document.getElementById('dup-table-wrap-inner').addEventListener('click', e => {
+    const btn = e.target.closest('[data-choice]');
+    if (!btn) return;
+    dup_decisions[btn.dataset.key] = { choice: btn.dataset.choice };
+    renderDupFiltered();
+    dupToast(`✓ ${btn.dataset.choice}`);
+  });
+
+  updateDupDecPanel();
+}
+
+function updateDupDecPanel() {
+  const panel = document.getElementById('dup-dec-panel');
+  if (!panel) return;
+  const actionable = dup_allRows.filter(isDupActionable);
+  const decided    = actionable.filter(r => dup_decisions[dupRowKey(r)]);
+  document.getElementById('dp2-decided').textContent = decided.length;
+  document.getElementById('dp2-pending').textContent = actionable.length - decided.length;
+  document.getElementById('dp2-download-btn').disabled = decided.length === 0;
+  panel.style.display = actionable.length > 0 ? 'flex' : 'none';
+}
+
+function downloadDupDecisions() {
+  const allKeys = dup_allRows.length ? Object.keys(dup_allRows[0]) : [];
+  const confirmLines = [allKeys.map(k => `"${k}"`).join(',')];
+  const skippedLines = [allKeys.map(k => `"${k}"`).join(',')];
+  dup_allRows.forEach(r => {
+    const key = dupRowKey(r);
+    const dec = dup_decisions[key];
+    const cat = r['Category'] || '';
+    const out = Object.assign({}, r);
+    if (isDupActionable(r) && dec) {
+      if (dec.choice === 'library') {
+        out['Action'] = (cat === 'DUPLICATE' || cat === 'Standard Duplicate')
+          ? 'Would move to DUPLICATE' : 'Would move to BETTER QUALITY';
+        confirmLines.push(allKeys.map(k => `"${String(out[k]||'').replace(/"/g,'""')}"`).join(','));
+      } else {
+        out['Action'] = dec.choice === 'skip' ? 'Skipped in viewer' : 'Keep unsorted — manual action required';
+        skippedLines.push(allKeys.map(k => `"${String(out[k]||'').replace(/"/g,'""')}"`).join(','));
+      }
+    } else {
+      confirmLines.push(allKeys.map(k => `"${String(out[k]||'').replace(/"/g,'""')}"`).join(','));
+    }
+  });
+  const filename = document.title.replace(/ — .*/, '').replace(/\.csv$/i, '') || 'music_report';
+  const dl = (content, name) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8;' }));
+    a.download = name; a.click();
+  };
+  dl(confirmLines.join('\n'), filename + '_reviewed.csv');
+  if (skippedLines.length > 1) setTimeout(() => dl(skippedLines.join('\n'), filename + '_skipped.csv'), 500);
+  dupToast('Downloaded! Use _reviewed.csv with --confirm.');
+}
+
+function clearDupDecisions() {
+  dup_decisions = {}; renderDupFiltered(); dupToast('Decisions cleared');
+}
+
+function dupToast(msg) {
+  const el = document.getElementById('dup-toast');
+  if (!el) return;
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(dup_toastTimer);
+  dup_toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ── Library Dupes View ───────────────────────────────────────────────────────
+let ld_allRows = [], ld_groups = [], ld_decisions = {}, ld_activeMethods = new Set();
+let ld_currentView = 'pairs', ld_sortSel = 'method', ld_toastTimer;
+
+function ldMethodType(m) {
+  if ((m || '').includes('fingerprint')) return 'fp';
+  if ((m || '') === 'metadata tags')     return 'metadata';
+  if ((m || '').includes('fuzzy'))       return 'fuzzy';
+  return 'filename';
+}
+
+function ldMethodBadge(m) {
+  const t = ldMethodType(m);
+  return `<span class="ld-badge-${t}">${escHtml(m || '')}</span>`;
+}
+
+function ldBuildGroups() {
+  const parent = {};
+  function find(x) {
+    if (!parent[x]) parent[x] = x;
+    if (parent[x] !== x) parent[x] = find(parent[x]);
+    return parent[x];
+  }
+  function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; }
+
+  const pathInfo = {};
+  ld_allRows.forEach(r => {
+    const pa = r['File A - Full Path'], pb = r['File B - Full Path'];
+    if (!pa || !pb) return;
+    union(pa, pb);
+    if (!pathInfo[pa]) pathInfo[pa] = { filename: r['File A - Filename'], topFolder: r['File A - Top Folder'],
+      folder: r['File A - Folder'], size: r['File A - Size'], bitrate: r['File A - Bitrate'],
+      duration: r['File A - Duration'], title: r['File A - Title'], artist: r['File A - Artist'],
+      album: r['File A - Album'], fullPath: pa };
+    if (!pathInfo[pb]) pathInfo[pb] = { filename: r['File B - Filename'], topFolder: r['File B - Top Folder'],
+      folder: r['File B - Folder'], size: r['File B - Size'], bitrate: r['File B - Bitrate'],
+      duration: r['File B - Duration'], title: r['File B - Title'], artist: r['File B - Artist'],
+      album: r['File B - Album'], fullPath: pb };
+  });
+
+  const clusters = {};
+  for (const path of Object.keys(pathInfo)) {
+    const root = find(path);
+    if (!clusters[root]) clusters[root] = [];
+    clusters[root].push(path);
+  }
+
+  ld_groups = [];
+  for (const [root, paths] of Object.entries(clusters)) {
+    if (paths.length < 2) continue;
+    const files = paths.map(p => pathInfo[p]);
+    const rep   = files.find(f => f.artist && f.title) || files[0];
+    const label = (rep.artist && rep.title) ? `${rep.artist} — ${rep.title}` : rep.filename;
+    const pathSet   = new Set(paths);
+    const groupRows = ld_allRows.filter(r => pathSet.has(r['File A - Full Path']) && pathSet.has(r['File B - Full Path']));
+    const methods   = groupRows.map(r => r['Match Method'] || '');
+    let method = methods[0] || '';
+    if (methods.some(m => m.includes('fingerprint'))) method = methods.find(m => m.includes('fingerprint'));
+    else if (methods.some(m => m === 'metadata tags')) method = 'metadata tags';
+    else if (methods.some(m => m.includes('fuzzy')))  method = methods.find(m => m.includes('fuzzy'));
+    ld_groups.push({ key: root, label, method, files, rows: groupRows });
+  }
+  ld_groups.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function ldRowKey(r) {
+  return [r['File A - Full Path'] || '', r['File B - Full Path'] || ''].sort().join('||');
+}
+
+function ldGetFilteredRows() {
+  let rows = ld_allRows;
+  if (ld_activeMethods.size > 0)
+    rows = rows.filter(r => ld_activeMethods.has(ldMethodType(r['Match Method'])));
+  const q = (state.searchQuery || '').toLowerCase();
+  if (q) rows = rows.filter(r =>
+    ['File A - Filename','File B - Filename','File A - Top Folder','File B - Top Folder',
+     'File A - Artist','File B - Artist'].some(k => (r[k]||'').toLowerCase().includes(q))
+  );
+  return rows.slice().sort((a, b) => {
+    let va, vb;
+    if (ld_sortSel === 'folder')    { va = a['File A - Top Folder']||''; vb = b['File A - Top Folder']||''; }
+    else if (ld_sortSel === 'score'){ return (parseFloat(b['FP Score'])||0) - (parseFloat(a['FP Score'])||0); }
+    else if (ld_sortSel === 'file') { va = a['File A - Filename']||'';   vb = b['File A - Filename']||''; }
+    else { va = a['Match Method']||''; vb = b['Match Method']||''; }
+    return va.localeCompare(vb);
+  });
+}
+
+function ldGetFilteredGroups() {
+  let gs = ld_groups;
+  if (ld_activeMethods.size > 0)
+    gs = gs.filter(g => ld_activeMethods.has(ldMethodType(g.method)));
+  const q = (state.searchQuery || '').toLowerCase();
+  if (q) gs = gs.filter(g =>
+    g.label.toLowerCase().includes(q) ||
+    g.files.some(f => (f.filename||'').toLowerCase().includes(q) || (f.topFolder||'').toLowerCase().includes(q))
+  );
+  return gs;
+}
+
+function ldFilePanelHtml(r, side) {
+  const fn    = r[`File ${side} - Filename`]   || '';
+  const topF  = r[`File ${side} - Top Folder`] || '';
+  const size  = r[`File ${side} - Size`]       || '';
+  const br    = r[`File ${side} - Bitrate`]    || '';
+  const dur   = r[`File ${side} - Duration`]   || '';
+  const title = r[`File ${side} - Title`]      || '';
+  const artist= r[`File ${side} - Artist`]     || '';
+  const path  = r[`File ${side} - Full Path`]  || '';
+  const chips = [size, br, dur].filter(Boolean).map(v => `<span class="ld-meta-chip">${escHtml(v)}</span>`).join('');
+  const tags  = [artist, title].filter(Boolean).join(' — ');
+  const abbr  = path.length > 65 ? '…' + path.slice(-63) : path;
+  return `<div class="ld-file-panel">
+    <div class="ld-file-name">${escHtml(fn)}</div>
+    <div class="ld-file-folder">${escHtml(topF)}</div>
+    ${chips ? `<div class="ld-file-meta">${chips}</div>` : ''}
+    ${tags  ? `<div class="ld-file-tags">${escHtml(tags)}</div>` : ''}
+    <div class="ld-file-path" title="${escHtml(path)}">${escHtml(abbr)}</div>
+  </div>`;
+}
+
+function ldRenderPairs() {
+  const rows  = ldGetFilteredRows();
+  const inner = document.getElementById('ld-table-wrap-inner');
+  document.getElementById('row-count').textContent =
+    rows.length === ld_allRows.length
+      ? `${ld_allRows.length.toLocaleString()} pairs`
+      : `${rows.length.toLocaleString()} of ${ld_allRows.length.toLocaleString()} pairs`;
+
+  if (!rows.length) { inner.innerHTML = '<div class="ld-no-rows">No rows match your filters.</div>'; return; }
+  inner.innerHTML = rows.map((r, i) => {
+    const rkey  = ldRowKey(r);
+    const dec   = ld_decisions[rkey];
+    const score = r['FP Score'] ? `<span class="ld-fp-score">${escHtml(r['FP Score'])}</span>` : '';
+    return `<div class="ld-pair-card${dec ? ' ld-decided' : ''}">
+      <div class="ld-pair-header">
+        ${ldMethodBadge(r['Match Method'])} ${score}
+        <span style="font-size:11px;color:var(--text-muted);margin-left:auto">#${i+1}</span>
+      </div>
+      <div class="ld-pair-files">${ldFilePanelHtml(r,'A')}${ldFilePanelHtml(r,'B')}</div>
+      <div class="ld-dec-row">
+        <span class="ld-dec-label">Keep:</span>
+        <button class="ld-dec-btn ld-keep-a${dec?.choice==='A'?' ld-active':''}" data-key="${escHtml(rkey)}" data-choice="A">File A</button>
+        <button class="ld-dec-btn ld-keep-b${dec?.choice==='B'?' ld-active':''}" data-key="${escHtml(rkey)}" data-choice="B">File B</button>
+        <button class="ld-dec-btn ld-keep-both${dec?.choice==='both'?' ld-active':''}" data-key="${escHtml(rkey)}" data-choice="both">Keep both</button>
+        <button class="ld-dec-btn ld-skip${dec?.choice==='skip'?' ld-active':''}" data-key="${escHtml(rkey)}" data-choice="skip">Skip</button>
+        ${dec ? `<span class="ld-decided-badge">✓ ${escHtml(dec.choice)}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function ldRenderGroups() {
+  const gs    = ldGetFilteredGroups();
+  const inner = document.getElementById('ld-table-wrap-inner');
+  document.getElementById('row-count').textContent =
+    gs.length === ld_groups.length
+      ? `${ld_groups.length.toLocaleString()} unique songs`
+      : `${gs.length.toLocaleString()} of ${ld_groups.length.toLocaleString()} unique songs`;
+
+  if (!gs.length) { inner.innerHTML = '<div class="ld-no-rows">No groups match your filters.</div>'; return; }
+  inner.innerHTML = gs.map((g, i) => {
+    const dec = ld_decisions[g.key];
+    const keepPaths = dec?.keepPaths || [];
+    const filesHtml = g.files.map(f => {
+      const isKept = keepPaths.includes(f.fullPath);
+      const chips  = [f.size, f.bitrate, f.duration].filter(Boolean)
+        .map(v => `<span class="ld-meta-chip">${escHtml(v)}</span>`).join('');
+      const abbr   = f.fullPath.length > 70 ? '…' + f.fullPath.slice(-68) : f.fullPath;
+      return `<div class="ld-group-file">
+        <div class="ld-gf-info">
+          <div class="ld-gf-name">${escHtml(f.filename)}</div>
+          <div class="ld-gf-folder">${escHtml(f.topFolder)}</div>
+          ${chips ? `<div class="ld-file-meta" style="margin-top:3px">${chips}</div>` : ''}
+          <div class="ld-gf-path" title="${escHtml(f.fullPath)}">${escHtml(abbr)}</div>
+        </div>
+        <button class="ld-keep-file-btn${isKept?' ld-active':''}" data-gkey="${escHtml(g.key)}" data-path="${escHtml(f.fullPath)}">
+          ${isKept ? '✓ Keeping' : 'Keep'}
+        </button>
+      </div>`;
+    }).join('');
+    return `<div class="ld-group-card${dec ? ' ld-decided' : ''}">
+      <div class="ld-group-header">
+        ${ldMethodBadge(g.method)}
+        <span class="ld-group-title">${escHtml(g.label)}</span>
+        <span class="ld-group-count">${g.files.length} copies</span>
+        <span style="font-size:11px;color:var(--text-muted)">#${i+1}</span>
+      </div>
+      <div class="ld-group-files">${filesHtml}</div>
+      <div class="ld-group-dec-row">
+        <span class="ld-dec-label" style="font-size:11px">Mark files to keep above, then:</span>
+        <button class="ld-dec-btn ld-skip${dec?.choice==='skip'?' ld-active':''}" data-gkey="${escHtml(g.key)}" data-gchoice="skip">Skip group</button>
+        ${dec ? `<span class="ld-decided-badge">✓ ${dec.choice==='skip' ? 'skipped' : 'keeping ' + (dec.keepPaths||[]).length}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function ldRender() {
+  if (ld_currentView === 'pairs') ldRenderPairs();
+  else ldRenderGroups();
+  ldUpdateDecPanel();
+}
+
+function ldRenderView(rows) {
+  ld_allRows = rows;
+  ldBuildGroups();
+
+  const wrap = document.getElementById('custom-wrapper');
+  wrap.style.paddingBottom = '80px';
+
+  const mc = { fp: 0, metadata: 0, fuzzy: 0, filename: 0 };
+  rows.forEach(r => { mc[ldMethodType(r['Match Method'])]++; });
+
+  const pillDefs = [
+    { key:'fp',       label:'FP (' + mc.fp + ')' },
+    { key:'metadata', label:'Metadata (' + mc.metadata + ')' },
+    { key:'fuzzy',    label:'Fuzzy (' + mc.fuzzy + ')' },
+    { key:'filename', label:'Filename (' + mc.filename + ')' },
+  ].filter(d => mc[d.key] > 0);
+
+  const pillsHtml = pillDefs.map(d =>
+    `<div class="ld-method-pill" data-method="${d.key}">${d.label}</div>`
+  ).join('');
+
+  const toolbarHtml = `<div class="ld-toolbar">
+    <div class="ld-view-tabs">
+      <button class="ld-view-tab${ld_currentView==='pairs'?' active':''}" data-view="pairs">Pairs (${rows.length.toLocaleString()})</button>
+      <button class="ld-view-tab${ld_currentView==='groups'?' active':''}" data-view="groups">Groups (${ld_groups.length.toLocaleString()})</button>
+    </div>
+    ${pillsHtml}
+    <select class="ld-sort-sel" id="ld-sort-sel">
+      <option value="method"${ld_sortSel==='method'?' selected':''}>Sort: Method</option>
+      <option value="folder"${ld_sortSel==='folder'?' selected':''}>Sort: Folder</option>
+      <option value="file"${ld_sortSel==='file'  ?' selected':''}>Sort: Filename</option>
+      <option value="score"${ld_sortSel==='score' ?' selected':''}>Sort: FP Score</option>
+    </select>
+    <button class="btn" id="ld-clear-filters-btn">Clear filters</button>
+  </div>`;
+
+  wrap.innerHTML = toolbarHtml + `<div id="ld-table-wrap-inner"></div>`;
+
+  wrap.querySelectorAll('[data-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      ld_currentView = btn.dataset.view;
+      wrap.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b === btn));
+      ldRender();
+    });
+  });
+
+  wrap.querySelectorAll('[data-method]').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const m = pill.dataset.method;
+      if (ld_activeMethods.has(m)) { ld_activeMethods.delete(m); pill.classList.remove('active'); }
+      else { ld_activeMethods.add(m); pill.classList.add('active'); }
+      ldRender();
+    });
+  });
+
+  document.getElementById('ld-sort-sel').addEventListener('change', e => {
+    ld_sortSel = e.target.value; ldRender();
+  });
+
+  document.getElementById('ld-clear-filters-btn').addEventListener('click', () => {
+    ld_activeMethods.clear();
+    state.searchQuery = ''; document.getElementById('search-box').value = '';
+    wrap.querySelectorAll('[data-method]').forEach(p => p.classList.remove('active'));
+    ldRender();
+  });
+
+  document.getElementById('ld-table-wrap-inner').addEventListener('click', e => {
+    const decBtn = e.target.closest('[data-choice][data-key]');
+    if (decBtn) {
+      ld_decisions[decBtn.dataset.key] = { choice: decBtn.dataset.choice };
+      ldRender(); ldToast('✓ ' + decBtn.dataset.choice); return;
+    }
+    const keepBtn = e.target.closest('[data-gkey][data-path]');
+    if (keepBtn) {
+      const gkey = keepBtn.dataset.gkey, path = keepBtn.dataset.path;
+      if (!ld_decisions[gkey]) ld_decisions[gkey] = { choice: 'keep', keepPaths: [] };
+      const kp = ld_decisions[gkey].keepPaths;
+      const idx = kp.indexOf(path);
+      if (idx >= 0) { kp.splice(idx, 1); if (kp.length === 0) delete ld_decisions[gkey]; }
+      else kp.push(path);
+      ldRender(); return;
+    }
+    const skipBtn = e.target.closest('[data-gchoice]');
+    if (skipBtn && skipBtn.dataset.gkey) {
+      ld_decisions[skipBtn.dataset.gkey] = { choice: 'skip', keepPaths: [] };
+      ldRender(); ldToast('Group skipped'); return;
+    }
+  });
+
+  ldRender();
+}
+
+function ldUpdateDecPanel() {
+  const panel = document.getElementById('ld-dec-panel');
+  if (!panel) return;
+  const total   = ld_currentView === 'pairs' ? ld_allRows.length : ld_groups.length;
+  const decided = Object.keys(ld_decisions).length;
+  document.getElementById('ld-decided').textContent = decided;
+  document.getElementById('ld-pending').textContent  = Math.max(0, total - decided);
+  document.getElementById('ld-download-btn').disabled = decided === 0;
+  panel.style.display = total > 0 ? 'flex' : 'none';
+}
+
+function ldDownloadDecisions() {
+  const lines = ['Decision,Keep Path,Remove Path,File A Path,File B Path,Match Method'];
+  const csvR  = cells => cells.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',');
+
+  if (ld_currentView === 'pairs') {
+    ld_allRows.forEach(r => {
+      const key = ldRowKey(r);
+      const dec = ld_decisions[key];
+      const pa  = r['File A - Full Path'] || '', pb = r['File B - Full Path'] || '';
+      const mt  = r['Match Method'] || '';
+      if (!dec)             lines.push(csvR(['pending','','',pa,pb,mt]));
+      else if (dec.choice === 'A') lines.push(csvR(['keep A',pa,pb,pa,pb,mt]));
+      else if (dec.choice === 'B') lines.push(csvR(['keep B',pb,pa,pa,pb,mt]));
+      else lines.push(csvR([dec.choice,'','',pa,pb,mt]));
+    });
+  } else {
+    ld_groups.forEach(g => {
+      const dec = ld_decisions[g.key];
+      const allPaths = g.files.map(f => f.fullPath);
+      if (!dec) {
+        g.files.forEach(f => lines.push(csvR(['pending','','',f.fullPath,'',g.method])));
+      } else if (dec.choice === 'skip') {
+        g.files.forEach(f => lines.push(csvR(['skip','','',f.fullPath,'',g.method])));
+      } else {
+        const keep   = dec.keepPaths || [];
+        const remove = allPaths.filter(p => !keep.includes(p));
+        keep.forEach(p   => lines.push(csvR(['keep',   p, remove.join('; '), p, '', g.method])));
+        remove.forEach(p => lines.push(csvR(['remove', keep.join('; '), p, p, '', g.method])));
+      }
+    });
+  }
+
+  const fname = document.title.replace(/ — .*/, '').replace(/\.csv$/i, '') || 'library_dupes';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' }));
+  a.download = fname + '_decisions.csv'; a.click();
+  ldToast('Downloaded!');
+}
+
+function ldClearDecisions() {
+  ld_decisions = {}; ldRender(); ldToast('Decisions cleared');
+}
+
+function ldToast(msg) {
+  const el = document.getElementById('dup-toast');
+  if (!el) return;
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(ld_toastTimer);
+  ld_toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ── Event wiring ─────────────────────────────────────────────────────────────
+const fileInput = document.getElementById('file-input');
+
+function openPicker() { fileInput.click(); }
+
+['header-open-btn','zone-open-btn','open-btn'].forEach(id =>
+  document.getElementById(id).addEventListener('click', openPicker)
+);
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadCSV(e.target.files[0]);
+  fileInput.value = '';
+});
+
+// Drag and drop
+const dropZone = document.getElementById('drop-zone');
+document.body.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+document.body.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+document.body.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.toLowerCase().endsWith('.csv')) loadCSV(file);
+  else if (file) alert('Please drop a CSV file.');
+});
+
+// Search (debounced)
+let searchTimer;
+document.getElementById('search-box').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.searchQuery = e.target.value;
+    state.page = 0;
+    if (state.config && state.config.customRender === 'duplicates') {
+      renderDupFiltered();
+    } else if (state.config && state.config.customRender === 'library_dupes') {
+      ldRender();
+    } else if (!state.config || !state.config.customRender) {
+      renderTable();
+    }
+    // scan_progress: search not used
+  }, 200);
+});
+
+// Status filter
+document.getElementById('status-filter').addEventListener('change', e => {
+  state.filterStatus = e.target.value;
+  state.page = 0;
+  renderTable();
+});
+
+// Page size
+document.getElementById('page-size-select').addEventListener('change', e => {
+  state.pageSize = parseInt(e.target.value);
+  state.page = 0;
+  renderTable();
+});
+
+// Export
+document.getElementById('export-btn').addEventListener('click', exportCSV);
+
+// Duplicates decision panel
+document.getElementById('dp2-clear-btn').addEventListener('click', clearDupDecisions);
+document.getElementById('dp2-download-btn').addEventListener('click', downloadDupDecisions);
+
+// Library dupes decision panel
+document.getElementById('ld-clear-btn').addEventListener('click', ldClearDecisions);
+document.getElementById('ld-download-btn').addEventListener('click', ldDownloadDecisions);
+
+// Column toggle
+const colPanel = document.getElementById('col-panel');
+document.getElementById('col-toggle-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  colPanel.style.display = colPanel.style.display === 'block' ? 'none' : 'block';
+});
+document.addEventListener('click', e => {
+  if (!colPanel.contains(e.target) && e.target.id !== 'col-toggle-btn') {
+    colPanel.style.display = 'none';
+  }
+});
+
+// Keyboard: Space on drop zone opens picker
+document.getElementById('drop-zone').addEventListener('keydown', e => {
+  if (e.key === ' ' || e.key === 'Enter') openPicker();
+});
+
+// Keyboard: Escape closes col panel
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') colPanel.style.display = 'none';
+});
+
+// ── Font size ─────────────────────────────────────────────────────────────────
+let fontSize = parseInt(localStorage.getItem('viewer_font_size') || '13');
+
+function setFontSize(n) {
+  fontSize = Math.max(10, Math.min(20, n));
+  document.documentElement.style.setProperty('--font-size', fontSize + 'px');
+  document.getElementById('font-size-display').textContent = fontSize + 'px';
+  localStorage.setItem('viewer_font_size', fontSize);
+}
+
+document.getElementById('font-dec-btn').addEventListener('click', () => setFontSize(fontSize - 1));
+document.getElementById('font-inc-btn').addEventListener('click', () => setFontSize(fontSize + 1));
+
+// ── Dark mode ─────────────────────────────────────────────────────────────────
+let darkMode = localStorage.getItem('viewer_dark_mode') === 'true';
+
+function applyDark() {
+  document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : '');
+  const btn = document.getElementById('dark-mode-btn');
+  btn.textContent = darkMode ? '☀' : '\U0001f319';
+  btn.title       = darkMode ? 'Switch to light mode' : 'Switch to dark mode';
+  btn.setAttribute('aria-label', darkMode ? 'Switch to light mode' : 'Switch to dark mode');
+  localStorage.setItem('viewer_dark_mode', darkMode);
+}
+
+document.getElementById('dark-mode-btn').addEventListener('click', () => {
+  darkMode = !darkMode;
+  applyDark();
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+setFontSize(fontSize);
+applyDark();
+</script>
+</body>
+</html>

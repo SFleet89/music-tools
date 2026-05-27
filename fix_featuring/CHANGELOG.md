@@ -2,6 +2,12 @@
 
 ---
 
+## v1.4 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
 ## v1.2 — 2026-04-25
 
 ### Added

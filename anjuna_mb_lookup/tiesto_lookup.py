@@ -1,5 +1,5 @@
 """
-MusicBrainz Batch Lookup  v1.7
+MusicBrainz Batch Lookup  v1.8
 Generic version of anjuna_mb_lookup — works with any music collection.
 
 Scans a folder of album subfolders, extracts search terms from each folder
@@ -48,340 +48,24 @@ except ImportError:
     print("WARNING: mutagen not installed — file metadata search disabled.")
     print("         Run: pip install mutagen\n")
 
+# ── Shared module ──────────────────────────────────────────────────────────────
+from music_mb_common import (
+    SUPPORTED_EXTENSIONS, MB_API_BASE, USER_AGENT, REQUEST_DELAY,
+    RESULT_LIMIT, FUZZY_THRESHOLD, CLEAR_WINNER_GAP, CLEAR_WINNER_MIN,
+    CATNO_PREFIX_MAP,
+    mb_get, mb_search, mb_search_catno, mb_search_artist_title,
+    mb_search_title_only, mb_fetch_release,
+    fuzzy_score, normalise, catno_search_variants, parse_folder_name,
+    read_folder_metadata, scan_batch_folder,
+    score_release, score_metadata, combined_score,
+    release_label, get_mb_catnos,
+    move_flagged_folders,
+)
+
 # ── Config ─────────────────────────────────────────────────────────────────────
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
-MB_API_BASE          = "https://musicbrainz.org/ws/2"
-USER_AGENT           = "MBLookup/1.0 ( music-tools )"
-REQUEST_DELAY        = 1.1
-RESULT_LIMIT         = 10
-FUZZY_THRESHOLD      = 70
-CLEAR_WINNER_GAP     = 10   # min score gap between 1st and 2nd candidate to auto-pick
-CLEAR_WINNER_MIN     = 75   # min combined score for the top candidate to qualify
-SCRIPT_DIR           = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).parent
 
 # ── Flags ──────────────────────────────────────────────────────────────────────
-_args  = [a for a in sys.argv[1:] if not a.startswith("--")]
-_flags = [a for a in sys.argv[1:] if a.startswith("--")]
-
-
-# ── Folder name parsing ────────────────────────────────────────────────────────
-
-# Matches square brackets e.g. [BH 118-5], or round brackets e.g. (2008)
-_BRACKET_RE  = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
-# Catno extraction: square brackets only — round brackets are years/descriptors
-_CATNO_RE    = re.compile(r'\[([^\]]+)\]')
-_YEAR_RE     = re.compile(r'\b(19|20)\d{2}\b')
-
-# ── Catalogue number prefix expansion ─────────────────────────────────────────
-# Maps label abbreviations/names used in folder names to their full label name.
-# Some labels store catnos on MusicBrainz WITHOUT a label prefix (e.g. Magik Muzik
-# uses bare numbers like "835-6"), so we also try stripping the prefix entirely.
-# Add entries here as you discover new patterns in your collection.
-CATNO_PREFIX_MAP = {
-    # Abbreviation / folder prefix  →  full label name (as stored on MB)
-    "MM":                            "Magik Muzik",
-    "Magik Muzik":                   "Magik Muzik",
-    "BH":                            "Black Hole Recordings",
-    "Black Hole":                    "Black Hole Recordings",
-    "BHDO":                          "Black Hole Recordings Download Only",
-    "DP":                            "Dance Planet Ltd.",
-    "NEB":                           "Nebula",
-    "K":                             "Kontor Records",
-    "D4L":                           "Dance 4 Life",
-}
-
-def catno_search_variants(catno):
-    """
-    Return a list of catno strings to try in order.
-    Always tries the raw catno first, then — if it starts with a known label
-    prefix — also tries the full label name variant, then the bare number.
-    Full label name is tried before bare number because the bare number is less
-    specific and risks matching unrelated releases on MB.
-    Example: "MM 835-6"  →  ["MM 835-6", "Magik Muzik 835-6", "835-6"]
-    """
-    variants = [catno]
-    upper = catno.upper()
-    for prefix, full_name in CATNO_PREFIX_MAP.items():
-        if upper.startswith(prefix.upper() + " "):
-            number_part = catno[len(prefix):].strip()
-            full_variant = "%s %s" % (full_name, number_part)
-            if full_variant not in variants:
-                variants.append(full_variant)
-            if number_part and number_part not in variants:
-                variants.append(number_part)
-            break
-    return variants
-# Format tags at end of folder name
-_FORMAT_RE   = re.compile(r'\b(WEB|CD|FLAC|MP3|LOSSLESS|320|V0|VINYL|SACD)\b', re.IGNORECASE)
-
-
-def parse_folder_name(name):
-    """
-    Extract year, artist, title, catno from a folder name.
-    Returns dict with keys: year, artist, title, catno, raw_catno
-    All values are strings or empty string if not found.
-
-    Handles patterns like:
-      1999 - DJ Tiesto - Sparkles [BH 118-5] WEB
-      Above & Beyond - Sun & Moon [ANJ196D] (2011)
-      Anjunabeats - Anjunabeats Volume 10
-      Massive Attack - Mezzanine
-    """
-    result = {"year": "", "artist": "", "title": "", "catno": "", "raw": name}
-
-    # Extract year from brackets or standalone
-    year_m = _YEAR_RE.search(name)
-    if year_m:
-        result["year"] = year_m.group(0)
-
-    # Extract catno from square brackets only (not years, not format tags)
-    # Also skip literal 'no cat' placeholders (normalised to NOCAT* after stripping punctuation)
-    catnos = []
-    for m in _CATNO_RE.finditer(name):
-        val = m.group(1).strip()
-        val_norm = re.sub(r'[\s\.\-_#]', '', val).upper()
-        if (not _YEAR_RE.fullmatch(val)
-                and not _FORMAT_RE.fullmatch(val)
-                and not val_norm.startswith("NOCAT")):
-            catnos.append(val)
-    if catnos:
-        result["catno"] = catnos[0]
-
-    # Strip brackets, format tags, and year to get clean text
-    clean = _BRACKET_RE.sub(" ", name)
-    clean = _FORMAT_RE.sub(" ", clean)
-    clean = _YEAR_RE.sub(" ", clean)
-    clean = re.sub(r'\s+', ' ', clean).strip(" -_.")
-
-    # Split on " - " to get artist / title
-    parts = [p.strip() for p in clean.split(" - ") if p.strip()]
-    if len(parts) >= 2:
-        result["artist"] = parts[0]
-        result["title"]  = " - ".join(parts[1:])
-    elif len(parts) == 1:
-        result["title"] = parts[0]
-
-    return result
-
-
-# ── File metadata reading ──────────────────────────────────────────────────────
-
-def read_folder_metadata(folder_path):
-    result = {"track_count": 0, "titles": [], "artists": set(), "albums": set()}
-    files  = sorted(
-        f for f in Path(folder_path).iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
-    result["track_count"] = len(files)
-    if not MUTAGEN_AVAILABLE:
-        return result
-    for f in files:
-        try:
-            audio = MutagenFile(f, easy=True)
-            if audio:
-                title  = (audio.get("title",  [""])[0] or "").strip().lower()
-                artist = (audio.get("artist", [""])[0] or "").strip().lower()
-                album  = (audio.get("album",  [""])[0] or "").strip().lower()
-                if title:  result["titles"].append(title)
-                if artist: result["artists"].add(artist)
-                if album:  result["albums"].add(album)
-        except Exception:
-            pass
-    return result
-
-
-# ── MusicBrainz API ────────────────────────────────────────────────────────────
-
-_last_request = 0
-
-def mb_get(url):
-    global _last_request
-    elapsed = time.time() - _last_request
-    if elapsed < REQUEST_DELAY:
-        time.sleep(REQUEST_DELAY - elapsed)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    _last_request = time.time()
-    return data
-
-
-def mb_search(query_params):
-    """Generic release search. query_params is a dict of Lucene query terms."""
-    parts = []
-    for k, v in query_params.items():
-        parts.append('%s:"%s"' % (k, v.replace('"', '\\"')))
-    query = " AND ".join(parts)
-    params = urllib.parse.urlencode({"query": query, "fmt": "json", "limit": str(RESULT_LIMIT)})
-    data   = mb_get("%s/release?%s" % (MB_API_BASE, params))
-    return data.get("releases", [])
-
-
-def mb_search_catno(catno):
-    return mb_search({"catno": catno})
-
-
-def mb_search_artist_title(artist, title):
-    return mb_search({"artist": artist, "release": title})
-
-
-def mb_search_title_only(title):
-    params = urllib.parse.urlencode({
-        "query": 'release:"%s"' % title.replace('"', '\\"'),
-        "fmt":   "json",
-        "limit": str(RESULT_LIMIT),
-    })
-    data = mb_get("%s/release?%s" % (MB_API_BASE, params))
-    return data.get("releases", [])
-
-
-def mb_fetch_release(mbid):
-    params = urllib.parse.urlencode({"inc": "recordings artist-credits labels", "fmt": "json"})
-    try:
-        return mb_get("%s/release/%s?%s" % (MB_API_BASE, mbid, params))
-    except Exception as e:
-        print("          ! Fetch error for %s: %s" % (mbid, e))
-        return None
-
-
-# ── Scoring ────────────────────────────────────────────────────────────────────
-
-def fuzzy_score(a, b):
-    import difflib
-    a = a.lower().strip()
-    b = b.lower().strip()
-    if a == b:
-        return 100
-    return int(difflib.SequenceMatcher(None, a, b).ratio() * 100)
-
-
-def normalise(s):
-    return s.upper().replace("-", "").replace(" ", "").strip()
-
-
-def score_release(release, parsed, folder_meta):
-    """
-    Score a release against our search terms.
-    Returns 0-100 overall score.
-    """
-    score = 0
-
-    # Catno match (highest weight)
-    if parsed["catno"]:
-        target_norm = normalise(parsed["catno"])
-        for li in release.get("label-info", []):
-            mb_catno = normalise(li.get("catalog-number") or "")
-            if mb_catno == target_norm:
-                score += 60
-                break
-            if target_norm in mb_catno or mb_catno in target_norm:
-                score += 40
-                break
-
-    # Title match
-    mb_title = release.get("title", "")
-    if parsed["title"] and mb_title:
-        ts = fuzzy_score(parsed["title"], mb_title)
-        score += int(ts * 0.25)
-
-    # Year match
-    mb_date = release.get("date", "") or ""
-    if parsed["year"] and mb_date.startswith(parsed["year"]):
-        score += 15
-
-    return min(score, 100)
-
-
-def score_metadata(folder_meta, release_detail):
-    if not release_detail:
-        return {"score": 0, "track_match": 0, "count_match": False, "details": "no tracklist"}
-
-    mb_tracks = []
-    for medium in release_detail.get("media", []):
-        for t in medium.get("tracks", []):
-            rec   = t.get("recording") or {}
-            title = t.get("title") or rec.get("title", "")
-            if title:
-                mb_tracks.append(title.lower().strip())
-
-    mb_count    = len(mb_tracks)
-    local_count = folder_meta["track_count"]
-    count_match = local_count == mb_count
-    details     = []
-    if not count_match:
-        details.append("track count: local=%d MB=%d" % (local_count, mb_count))
-
-    title_score = 0
-    if folder_meta["titles"] and mb_tracks:
-        matched = sum(
-            1 for lt in folder_meta["titles"]
-            if max((fuzzy_score(lt, mt) for mt in mb_tracks), default=0) >= FUZZY_THRESHOLD
-        )
-        title_score = int(matched / len(folder_meta["titles"]) * 100)
-        if title_score < 100:
-            details.append("title match: %d%%" % title_score)
-    elif not folder_meta["titles"]:
-        title_score = 50
-        details.append("no title tags in files")
-    else:
-        title_score = 50
-
-    if count_match and title_score >= 80:   overall = 100
-    elif count_match and title_score >= 50: overall = 80
-    elif title_score >= 80:                 overall = 70
-    elif title_score >= 50:                 overall = 50
-    else:                                   overall = 20
-
-    return {
-        "score":       overall,
-        "track_match": title_score,
-        "count_match": count_match,
-        "details":     "; ".join(details) if details else "good match",
-    }
-
-
-def combined_score(search_score, meta_score):
-    return int(search_score * 0.6 + meta_score * 0.4)
-
-
-# ── Release formatting ─────────────────────────────────────────────────────────
-
-def release_label(release):
-    title  = release.get("title", "Unknown")
-    artist = release.get("artist-credit-phrase", "")
-    date   = release.get("date", "")
-    label_info = release.get("label-info", [])
-    catnos = ", ".join(li.get("catalog-number","") for li in label_info if li.get("catalog-number"))
-    parts  = [title]
-    if artist: parts.append(artist)
-    if date:   parts.append(date[:4])
-    if catnos: parts.append("[%s]" % catnos)
-    return "  —  ".join(parts)
-
-
-def get_mb_catnos(release):
-    return ", ".join(
-        li.get("catalog-number", "")
-        for li in release.get("label-info", [])
-        if li.get("catalog-number")
-    )
-
-
-# ── Folder scanning ────────────────────────────────────────────────────────────
-
-def scan_batch_folder(batch_path):
-    results = []
-    for sub in sorted(Path(batch_path).iterdir()):
-        if not sub.is_dir():
-            continue
-        has_music = any(
-            f.suffix.lower() in SUPPORTED_EXTENSIONS
-            for f in sub.iterdir() if f.is_file()
-        )
-        if has_music:
-            results.append(sub)
-    return results
-
 
 # ── Main lookup ────────────────────────────────────────────────────────────────
 
@@ -604,74 +288,6 @@ def _make_row(folder, parsed, status, release, mbid, candidates_detail, folder_m
     }
 
 
-# ── Folder mover ───────────────────────────────────────────────────────────────
-
-def move_flagged_folders(rows, apply_mode):
-    """
-    Move review/not_found/no_catno folders into subfolders next to their
-    current location:
-      status=review              → <parent>/To Review/<folder>
-      status=not_found|no_catno → <parent>/No Match/<folder>
-    Dry run by default; pass apply_mode=True to execute moves.
-    """
-    import shutil as _shutil
-
-    DEST_MAP = {
-        "review":    "To Review",
-        "not_found": "No Match",
-        "no_catno":  "No Match",
-    }
-
-    moves = []
-    for row in rows:
-        dest_name = DEST_MAP.get(row.get("status", ""))
-        if not dest_name:
-            continue
-        src = Path(row["folder_path"])
-        if not src.exists():
-            continue
-        dest_dir = src.parent / dest_name
-        moves.append((src, dest_dir / src.name, dest_dir, dest_name))
-
-    print()
-    print("=" * 60)
-    print("  FOLDER MOVE  (%s)" % ("APPLY" if apply_mode else "DRY RUN"))
-    print("=" * 60)
-
-    if not moves:
-        print("  No folders to move.")
-        print("=" * 60)
-        return
-
-    for src, dst, dest_dir, label in moves:
-        print("  [%-10s]  %s" % (label, src.name))
-
-    if not apply_mode:
-        print()
-        print("  %d folder(s) would be moved. Add --apply to execute." % len(moves))
-        print("=" * 60)
-        return
-
-    moved = errors = 0
-    seen_dirs = set()
-    for src, dst, dest_dir, label in moves:
-        if dest_dir not in seen_dirs:
-            dest_dir.mkdir(exist_ok=True)
-            seen_dirs.add(dest_dir)
-        try:
-            _shutil.move(str(src), str(dst))
-            moved += 1
-        except Exception as e:
-            print("  ! Error moving %s: %s" % (src.name, e))
-            errors += 1
-
-    print()
-    print("  Moved : %d" % moved)
-    if errors:
-        print("  Errors: %d" % errors)
-    print("=" * 60)
-
-
 # ── CSV output ─────────────────────────────────────────────────────────────────
 
 FIELDNAMES = [
@@ -712,9 +328,72 @@ def print_summary(rows, auto_mode, output_path):
     print("=" * 60)
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_tiesto_lookup(
+    batch_path,
+    auto_mode: bool = True,
+    reports_dir=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Run a Tiesto MusicBrainz batch lookup on a folder of album subfolders.
+
+    Args:
+        batch_path:        Root folder containing album subfolders.
+        auto_mode:         True = auto-pick best match; False = flag for review.
+        reports_dir:       Where to save; defaults to <script folder>/../reports.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: matched, auto_matched, review, not_found, errors,
+              rows (list), report_path (Path|None)
+
+    Raises:
+        ValueError: batch_path does not exist or is not a directory.
+    """
+    from collections import Counter
+    log        = log_callback or print
+    batch_path = Path(batch_path)
+
+    if not batch_path.exists() or not batch_path.is_dir():
+        raise ValueError(f"Folder not found: {batch_path}")
+
+    rows = run_lookup(str(batch_path), auto_mode)
+
+    if not rows:
+        return {"matched": 0, "auto_matched": 0, "review": 0,
+                "not_found": 0, "errors": 0, "rows": [], "report_path": None}
+
+    _reports = Path(reports_dir) if reports_dir else SCRIPT_DIR.parent / "reports"
+    _reports.mkdir(parents=True, exist_ok=True)
+    ts          = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = _reports / f"tiesto_lookup_{ts}.csv"
+    write_csv(rows, str(output_path))
+
+    counts = Counter(r["status"] for r in rows)
+    return {
+        "matched":      counts.get("matched", 0),
+        "auto_matched": counts.get("auto_matched", 0),
+        "review":       counts.get("review", 0),
+        "not_found":    counts.get("not_found", 0),
+        "errors":       counts.get("error", 0),
+        "rows":         rows,
+        "report_path":  output_path,
+    }
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
+    _args  = [a for a in sys.argv[1:] if not a.startswith("--")]
+    _flags = [a for a in sys.argv[1:] if a.startswith("--")]
+
     if "--auto" in _flags:
         auto_mode = True
     elif "--review" in _flags:
@@ -742,7 +421,6 @@ def main():
             root.attributes("-topmost", True)
             chosen = filedialog.askdirectory(
                 title="Select folder of album subfolders to look up",
-                initialdir=r"C:\Users\neo_s\Downloads\To Move",
             )
             root.destroy()
             if not chosen:
@@ -767,7 +445,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  MusicBrainz Batch Lookup  v1.7")
+    print("  MusicBrainz Batch Lookup  v1.8")
     print("=" * 60)
     print("  Folder    : %s" % batch_path)
     print("  Mode      : %s" % mode_label)

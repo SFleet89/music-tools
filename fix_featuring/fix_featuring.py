@@ -1,5 +1,5 @@
 """
-Fix Featuring Tags  v1.2
+Fix Featuring Tags  v1.5
 =========================
 Moves featuring credits from the Artist tag to the Title tag.
 
@@ -27,24 +27,6 @@ Usage:
 
 Output:
     Reports saved to: <script folder>\\reports\\fix_featuring_YYYYMMDD_HHMMSS.csv
-
-Changes in v1.2:
-    - Added --from-csv flag: applies changes from a dry-run CSV report without
-      re-scanning the library. A file picker opens to select the CSV.
-      Only 'pending' rows are processed — skipped, errors, no_featuring ignored.
-      Each file's current tags are verified against the dry-run snapshot before
-      writing. A warning is shown if a tag changed between the dry run and now.
-
-Changes in v1.1:
-    - Fixed: Unicode lookalike characters (One Dot Leader U+2024, non-breaking
-      hyphens, etc.) in artist tags were invisible to the regex, causing all
-      files to report no_featuring. Tags are now normalized to ASCII before
-      matching and when writing back.
-    - Fixed: Reports folder was saved to parent of script folder instead of
-      inside script folder.
-
-Changes in v1.0:
-    - Initial release.
 """
 
 import sys
@@ -53,7 +35,14 @@ import csv
 from pathlib import Path
 from datetime import datetime
 
-# ── Optional mutagen ───────────────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import (
+    SUPPORTED_EXTENSIONS,
+    pick_folder,
+    write_csv,
+    interactive_options,
+)
+
 try:
     from mutagen import File as MutagenFile
     MUTAGEN_AVAILABLE = True
@@ -63,208 +52,23 @@ except ImportError:
     print("ERROR: mutagen is required. Run: pip install mutagen")
     sys.exit(1)
 
-# ── Config ─────────────────────────────────────────────────────────────────────
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
-SCRIPT_DIR           = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).parent
 
 # ── Unicode normalization ──────────────────────────────────────────────────────
-# Some tagging tools write visually identical but technically different characters.
-# These must be normalized to ASCII before regex matching and before writing back.
 _UNICODE_MAP = str.maketrans({
-    "\u2024": ".",   # ONE DOT LEADER  ․  → .
-    "\u2025": "..",  # TWO DOT LEADER  ‥  → ..
-    "\uFF0E": ".",   # FULLWIDTH FULL STOP ．→ .
-    "\u2010": "-",   # HYPHEN ‐ → -
-    "\u2011": "-",   # NON-BREAKING HYPHEN ‑ → -
-    "\u2012": "-",   # FIGURE DASH ‒ → -
-    "\u2013": "-",   # EN DASH – → -
-    "\u2019": "'",   # RIGHT SINGLE QUOTATION MARK ' → '
-    "\u2018": "'",   # LEFT SINGLE QUOTATION MARK ' → '
+    "․": ".",   "‥": "..",  "．": ".",
+    "‐": "-",   "‑": "-",   "‒": "-",   "–": "-",
+    "’": "'",   "‘": "'",
 })
 
 def normalize_text(s):
-    """Replace Unicode lookalike characters with their ASCII equivalents."""
     return s.translate(_UNICODE_MAP)
 
-
-# Matches featuring credit anywhere in a string:
-#   "Artist feat. Name"
-#   "Artist (feat. Name)"
-#   "Artist [ft. Name]"
-#   "Artist featuring Name"
-# Capture group 1 = opening bracket (or empty)
-# Capture group 2 = the featuring name(s)
 _FEAT_RE = re.compile(
     r'\s*([\(\[]?)\s*(?:feat(?:uring)?\.?|ft\.)\s+([^\)\]]+?)([\)\]]?)\s*$',
     re.IGNORECASE
 )
-
-# For detecting if title already has a featuring credit
-_TITLE_FEAT_RE = re.compile(
-    r'(?:feat(?:uring)?\.?|ft\.)',
-    re.IGNORECASE
-)
-
-
-# ── Featuring extraction ───────────────────────────────────────────────────────
-
-def extract_featuring(artist):
-    """
-    Parse a featuring credit from an artist string.
-    Returns (clean_artist, feat_string) where feat_string is e.g. 'feat. Zoë Johnston'
-    or (original, None) if no featuring found.
-    """
-    # Normalize Unicode lookalikes so the regex can match them
-    artist_norm = normalize_text(artist)
-    m = _FEAT_RE.search(artist_norm)
-    if not m:
-        return artist, None
-
-    # Use match positions from the normalized string but apply to original
-    clean       = artist_norm[:m.start()].strip().rstrip(",;&").strip()
-    feat_name   = m.group(2).strip().rstrip(")].").strip()
-    feat_string = "feat. %s" % feat_name
-
-    return clean, feat_string
-
-
-def build_new_title(title, feat_string):
-    """
-    Append feat_string to title if the title doesn't already contain it.
-    Returns new title or None if no change needed.
-    """
-    if _TITLE_FEAT_RE.search(title):
-        return None   # already has featuring info
-    return "%s (%s)" % (title, feat_string)
-
-
-# ── Tag reading/writing ────────────────────────────────────────────────────────
-
-def get_artist_title(audio_easy):
-    """Read artist and title from an easy-tag mutagen file."""
-    artist = (audio_easy.get("artist", [None])[0] or "").strip()
-    title  = (audio_easy.get("title",  [None])[0] or "").strip()
-    return artist or None, title or None
-
-
-def set_artist_title(audio_easy, artist, title):
-    """Write artist and title back via easy tags."""
-    audio_easy["artist"] = [artist]
-    audio_easy["title"]  = [title]
-    audio_easy.save()
-
-
-# ── File processing ────────────────────────────────────────────────────────────
-
-def process_file(file_path, apply_mode):
-    """
-    Process a single audio file. Returns a report row dict.
-    """
-    try:
-        audio = MutagenFile(str(file_path), easy=True)
-        if audio is None:
-            return _row(file_path, None, None, None, None,
-                        "skipped", "Unrecognised file format")
-
-        orig_artist, orig_title = get_artist_title(audio)
-
-        if not orig_artist:
-            return _row(file_path, orig_artist, None, orig_title, None,
-                        "skipped", "No artist tag")
-
-        clean_artist, feat_string = extract_featuring(orig_artist)
-
-        if feat_string is None:
-            return _row(file_path, orig_artist, None, orig_title, None,
-                        "no_featuring", "No featuring credit found")
-
-        # Decide what to do with the title
-        if orig_title:
-            new_title = build_new_title(orig_title, feat_string)
-        else:
-            new_title = None   # no title to append to — still clean the artist
-
-        notes_parts = ["artist cleaned"]
-        if new_title:
-            notes_parts.append("feat. appended to title")
-        elif orig_title and _TITLE_FEAT_RE.search(orig_title):
-            notes_parts.append("title already has feat. — not modified")
-        else:
-            notes_parts.append("no title tag — artist only")
-
-        if apply_mode:
-            final_title = new_title if new_title else orig_title
-            set_artist_title(audio, clean_artist,
-                             final_title if final_title else "")
-            status = "modified"
-        else:
-            status = "pending"
-
-        return _row(file_path,
-                    orig_artist, clean_artist,
-                    orig_title,  new_title if new_title else orig_title,
-                    status, "; ".join(notes_parts))
-
-    except Exception as e:
-        return _row(file_path, None, None, None, None,
-                    "error", "Exception: %s" % e)
-
-
-def _row(file_path, orig_artist, new_artist, orig_title, new_title, status, notes):
-    return {
-        "file_path":     str(file_path),
-        "original_artist": orig_artist or "",
-        "new_artist":    new_artist   or "",
-        "original_title": orig_title  or "",
-        "new_title":     new_title    or "",
-        "status":        status,
-        "notes":         notes,
-    }
-
-
-# ── Folder scanning ────────────────────────────────────────────────────────────
-
-def find_audio_files(root_path):
-    """Recursively find all supported audio files under root_path."""
-    results = []
-    for p in sorted(Path(root_path).rglob("*")):
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
-            results.append(p)
-    return results
-
-
-# ── Main logic ─────────────────────────────────────────────────────────────────
-
-def run(root_path, apply_mode):
-    files = find_audio_files(root_path)
-    total = len(files)
-
-    if total == 0:
-        print("  No audio files found in: %s" % root_path)
-        return []
-
-    print()
-    print("  Found %d audio file(s) to process." % total)
-    print()
-
-    rows = []
-    for idx, f in enumerate(files, 1):
-        row = process_file(f, apply_mode)
-        rows.append(row)
-
-        if row["status"] in ("pending", "modified"):
-            print("  [%d/%d]  %s" % (idx, total, f.name))
-            print("          Artist : %s → %s" % (row["original_artist"],
-                                                    row["new_artist"]))
-            if row["new_title"] != row["original_title"]:
-                print("          Title  : %s → %s" % (row["original_title"],
-                                                        row["new_title"]))
-            print("          %s" % row["notes"])
-
-    return rows
-
-
-# ── CSV output ─────────────────────────────────────────────────────────────────
+_TITLE_FEAT_RE = re.compile(r'(?:feat(?:uring)?\.?|ft\.)', re.IGNORECASE)
 
 FIELDNAMES = [
     "file_path",
@@ -274,39 +78,112 @@ FIELDNAMES = [
 ]
 
 
-def write_csv(rows, output_path):
-    with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
+# ══════════════════════════════════════════════════════════════════════════════
+#  HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def extract_featuring(artist):
+    artist_norm = normalize_text(artist)
+    m = _FEAT_RE.search(artist_norm)
+    if not m:
+        return artist, None
+    clean       = artist_norm[:m.start()].strip().rstrip(",;&").strip()
+    feat_name   = m.group(2).strip().rstrip(")].").strip()
+    return clean, "feat. %s" % feat_name
 
 
-def print_summary(rows, apply_mode, output_path):
+def build_new_title(title, feat_string):
+    if _TITLE_FEAT_RE.search(title):
+        return None
+    return "%s (%s)" % (title, feat_string)
+
+
+def get_artist_title(audio_easy):
+    artist = (audio_easy.get("artist", [None])[0] or "").strip()
+    title  = (audio_easy.get("title",  [None])[0] or "").strip()
+    return artist or None, title or None
+
+
+def set_artist_title(audio_easy, artist, title):
+    audio_easy["artist"] = [artist]
+    audio_easy["title"]  = [title]
+    audio_easy.save()
+
+
+def _row(file_path, orig_artist, new_artist, orig_title, new_title, status, notes):
+    return {
+        "file_path":       str(file_path),
+        "original_artist": orig_artist or "",
+        "new_artist":      new_artist  or "",
+        "original_title":  orig_title  or "",
+        "new_title":       new_title   or "",
+        "status":          status,
+        "notes":           notes,
+    }
+
+
+def process_file(file_path, apply_mode):
+    try:
+        audio = MutagenFile(str(file_path), easy=True)
+        if audio is None:
+            return _row(file_path, None, None, None, None,
+                        "skipped", "Unrecognised file format")
+        orig_artist, orig_title = get_artist_title(audio)
+        if not orig_artist:
+            return _row(file_path, orig_artist, None, orig_title, None,
+                        "skipped", "No artist tag")
+        clean_artist, feat_string = extract_featuring(orig_artist)
+        if feat_string is None:
+            return _row(file_path, orig_artist, None, orig_title, None,
+                        "no_featuring", "No featuring credit found")
+        new_title = build_new_title(orig_title, feat_string) if orig_title else None
+        notes_parts = ["artist cleaned"]
+        if new_title:
+            notes_parts.append("feat. appended to title")
+        elif orig_title and _TITLE_FEAT_RE.search(orig_title):
+            notes_parts.append("title already has feat. — not modified")
+        else:
+            notes_parts.append("no title tag — artist only")
+        if apply_mode:
+            final_title = new_title if new_title else orig_title
+            set_artist_title(audio, clean_artist, final_title if final_title else "")
+            status = "modified"
+        else:
+            status = "pending"
+        return _row(file_path, orig_artist, clean_artist,
+                    orig_title, new_title if new_title else orig_title,
+                    status, "; ".join(notes_parts))
+    except Exception as e:
+        return _row(file_path, None, None, None, None,
+                    "error", "Exception: %s" % e)
+
+
+def find_audio_files(root_path):
+    return sorted(
+        p for p in Path(root_path).rglob("*")
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+
+
+def print_summary(rows, apply_mode, output_path, log=print):
     counts = {}
     for r in rows:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
-
-    print()
-    print("=" * 60)
-    print("  SUMMARY  (%s)" % ("APPLY" if apply_mode else "DRY RUN"))
-    print("=" * 60)
+    log("=" * 60)
+    log("  SUMMARY  (%s)" % ("APPLY" if apply_mode else "DRY RUN"))
+    log("=" * 60)
     if apply_mode:
-        print("  Modified           : %d" % counts.get("modified", 0))
+        log("  Modified           : %d" % counts.get("modified", 0))
     else:
-        print("  Would modify       : %d" % counts.get("pending", 0))
-    print("  No featuring found : %d" % counts.get("no_featuring", 0))
-    print("  Skipped            : %d" % counts.get("skipped", 0))
-    print("  Errors             : %d" % counts.get("error", 0))
-    print()
-    print("  Report saved to:")
-    print("  %s" % output_path)
-    print("=" * 60)
+        log("  Would modify       : %d" % counts.get("pending", 0))
+    log("  No featuring found : %d" % counts.get("no_featuring", 0))
+    log("  Skipped            : %d" % counts.get("skipped", 0))
+    log("  Errors             : %d" % counts.get("error", 0))
+    log("  Report: %s" % output_path)
+    log("=" * 60)
 
-
-# ── CSV-driven apply ──────────────────────────────────────────────────────────
 
 def load_pending_rows(csv_path):
-    """Read a dry-run CSV and return only the rows with status 'pending'."""
     rows = []
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
@@ -315,127 +192,7 @@ def load_pending_rows(csv_path):
     return rows
 
 
-def run_from_csv(csv_path):
-    """
-    Apply tag changes from a dry-run CSV report.
-
-    For each pending row:
-      1. Verify the file still exists.
-      2. Re-read the current artist tag and compare to the dry-run snapshot.
-         If it has changed since the dry run, warn and skip — don't overwrite
-         unexpected state.
-      3. Write new_artist and new_title from the CSV directly to the file.
-
-    Returns a list of result row dicts for the output report.
-    """
-    pending = load_pending_rows(csv_path)
-
-    if not pending:
-        print("  No pending rows found in the CSV. Nothing to apply.")
-        return []
-
-    print()
-    print("  %d pending change(s) loaded from CSV." % len(pending))
-    print()
-
-    results   = []
-    modified  = 0
-    skipped   = 0
-    warnings  = 0
-    errors    = 0
-
-    for idx, csv_row in enumerate(pending, 1):
-        file_path   = Path(csv_row.get("file_path", "").strip())
-        new_artist  = csv_row.get("new_artist",  "").strip()
-        new_title   = csv_row.get("new_title",   "").strip()
-        dry_artist  = csv_row.get("original_artist", "").strip()
-
-        # ── File must still exist ──
-        if not file_path.exists():
-            print("  [%d/%d]  MISSING  %s" % (idx, len(pending), file_path.name))
-            print("           File no longer exists — skipping.")
-            results.append(_row(file_path, dry_artist, new_artist,
-                                csv_row.get("original_title", ""), new_title,
-                                "skipped", "File not found"))
-            skipped += 1
-            continue
-
-        try:
-            audio = MutagenFile(str(file_path), easy=True)
-            if audio is None:
-                raise ValueError("Unrecognised file format")
-
-            current_artist, current_title = get_artist_title(audio)
-            current_artist_norm = normalize_text(current_artist or "")
-            dry_artist_norm     = normalize_text(dry_artist)
-
-            # ── Warn if the artist tag changed since the dry run ──
-            if current_artist_norm != dry_artist_norm:
-                print("  [%d/%d]  WARNING  %s" % (idx, len(pending), file_path.name))
-                print("           Artist tag changed since dry run:")
-                print("           Dry run : %s" % dry_artist)
-                print("           Current : %s" % (current_artist or "(empty)"))
-                print("           Skipping to avoid overwriting unexpected state.")
-                results.append(_row(file_path, current_artist, new_artist,
-                                    current_title, new_title,
-                                    "skipped",
-                                    "Artist changed since dry run — not modified"))
-                skipped  += 1
-                warnings += 1
-                continue
-
-            # ── Write the tags ──
-            set_artist_title(audio, new_artist, new_title)
-
-            print("  [%d/%d]  %s" % (idx, len(pending), file_path.name))
-            print("          Artist : %s → %s" % (dry_artist, new_artist))
-            if new_title != csv_row.get("original_title", ""):
-                print("          Title  : %s → %s" % (
-                    csv_row.get("original_title", ""), new_title))
-
-            results.append(_row(file_path, dry_artist, new_artist,
-                                csv_row.get("original_title", ""), new_title,
-                                "modified", csv_row.get("notes", "")))
-            modified += 1
-
-        except Exception as e:
-            print("  [%d/%d]  ERROR    %s — %s" % (idx, len(pending), file_path.name, e))
-            results.append(_row(file_path, dry_artist, new_artist,
-                                csv_row.get("original_title", ""), new_title,
-                                "error", "Exception: %s" % e))
-            errors += 1
-
-    print()
-    print("  Done.  Modified: %d  |  Skipped: %d  |  Errors: %d" % (
-        modified, skipped, errors))
-    if warnings:
-        print("  NOTE: %d file(s) had artist tags that changed since the dry run "
-              "and were skipped." % warnings)
-
-    return results
-
-
-# ── Entry point ────────────────────────────────────────────────────────────────
-
-def pick_folder():
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        chosen = filedialog.askdirectory(
-            title="Select folder to scan for featuring tags",
-            initialdir=r"C:\Users\neo_s\Downloads\To Move\Music",
-        )
-        root.destroy()
-        return chosen or None
-    except Exception as e:
-        print("ERROR: Could not open folder picker: %s" % e)
-        return None
-
-
-def pick_csv_file():
+def _pick_csv_file():
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -454,78 +211,207 @@ def pick_csv_file():
         return None
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_fix_featuring(
+    folder: Path,
+    apply: bool = False,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Scan folder and move featuring credits from Artist tag to Title tag.
+
+    Args:
+        folder:            Root folder to scan recursively.
+        apply:             False = dry run; True = write tags.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: modified, pending, no_featuring, skipped, errors,
+              results (list of row dicts), report_path (Path|None)
+
+    Raises:
+        ValueError: folder does not exist or is not a directory.
+    """
+    log = log_callback or print
+
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Folder not found: {folder}")
+
+    files = find_audio_files(folder)
+    if not files:
+        log(f"  No audio files found in: {folder}")
+        return {"modified": 0, "pending": 0, "no_featuring": 0,
+                "skipped": 0, "errors": 0, "results": [], "report_path": None}
+
+    log(f"  Found {len(files)} audio file(s) to scan.")
+    rows = []
+
+    for idx, f in enumerate(files):
+        if progress_callback:
+            progress_callback(idx + 1, len(files), f.name)
+        row = process_file(f, apply_mode=apply)
+        rows.append(row)
+        if row["status"] in ("pending", "modified"):
+            log(f"  [{idx+1}/{len(files)}]  {f.name}")
+            log(f"          Artist : {row['original_artist']} → {row['new_artist']}")
+            if row["new_title"] != row["original_title"]:
+                log(f"          Title  : {row['original_title']} → {row['new_title']}")
+
+    reports_dir = SCRIPT_DIR / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = "applied" if apply else "dry"
+    report_path = reports_dir / f"fix_featuring_{ts}_{suffix}.csv"
+    write_csv(rows, str(report_path), fieldnames=FIELDNAMES)
+    log(f"  Report saved: {report_path}")
+
+    counts = {}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+    return {
+        "modified":     counts.get("modified", 0),
+        "pending":      counts.get("pending", 0),
+        "no_featuring": counts.get("no_featuring", 0),
+        "skipped":      counts.get("skipped", 0),
+        "errors":       counts.get("error", 0),
+        "results":      rows,
+        "report_path":  report_path,
+    }
+
+
+def run_fix_featuring_from_csv(
+    csv_path: Path,
+    log_callback=None,
+) -> dict:
+    """
+    Apply tag changes from a previous dry-run CSV. GUI or CLI can call this.
+
+    Raises:
+        ValueError: csv_path does not exist.
+    """
+    log = log_callback or print
+
+    if not csv_path.exists():
+        raise ValueError(f"CSV not found: {csv_path}")
+
+    pending = load_pending_rows(csv_path)
+    if not pending:
+        log("  No pending rows found in the CSV. Nothing to apply.")
+        return {"modified": 0, "skipped": 0, "errors": 0,
+                "results": [], "report_path": None}
+
+    log(f"  {len(pending)} pending change(s) loaded from CSV.")
+    results  = []
+    modified = skipped = warnings = errors = 0
+
+    for idx, csv_row in enumerate(pending, 1):
+        file_path  = Path(csv_row.get("file_path", "").strip())
+        new_artist = csv_row.get("new_artist",  "").strip()
+        new_title  = csv_row.get("new_title",   "").strip()
+        dry_artist = csv_row.get("original_artist", "").strip()
+
+        if not file_path.exists():
+            log(f"  [{idx}/{len(pending)}]  MISSING  {file_path.name}")
+            results.append(_row(file_path, dry_artist, new_artist,
+                                csv_row.get("original_title", ""), new_title,
+                                "skipped", "File not found"))
+            skipped += 1
+            continue
+        try:
+            audio = MutagenFile(str(file_path), easy=True)
+            if audio is None:
+                raise ValueError("Unrecognised file format")
+            current_artist, current_title = get_artist_title(audio)
+            if normalize_text(current_artist or "") != normalize_text(dry_artist):
+                log(f"  [{idx}/{len(pending)}]  WARNING  {file_path.name} — artist changed since dry run, skipping")
+                results.append(_row(file_path, current_artist, new_artist,
+                                    current_title, new_title, "skipped",
+                                    "Artist changed since dry run"))
+                skipped += 1
+                warnings += 1
+                continue
+            set_artist_title(audio, new_artist, new_title)
+            log(f"  [{idx}/{len(pending)}]  {file_path.name} — {dry_artist} → {new_artist}")
+            results.append(_row(file_path, dry_artist, new_artist,
+                                csv_row.get("original_title", ""), new_title,
+                                "modified", csv_row.get("notes", "")))
+            modified += 1
+        except Exception as e:
+            log(f"  [{idx}/{len(pending)}]  ERROR  {file_path.name} — {e}")
+            results.append(_row(file_path, dry_artist, new_artist,
+                                csv_row.get("original_title", ""), new_title,
+                                "error", f"Exception: {e}"))
+            errors += 1
+
+    log(f"  Done. Modified: {modified}  |  Skipped: {skipped}  |  Errors: {errors}")
+    if warnings:
+        log(f"  NOTE: {warnings} file(s) had artist tags that changed since the dry run.")
+
+    reports_dir = SCRIPT_DIR / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = reports_dir / f"fix_featuring_{ts}_applied.csv"
+    write_csv(results, str(report_path), fieldnames=FIELDNAMES)
+    log(f"  Report saved: {report_path}")
+
+    return {"modified": modified, "skipped": skipped, "errors": errors,
+            "results": results, "report_path": report_path}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLI ENTRY POINT  ← .cmd launchers call this; GUI does not
+# ══════════════════════════════════════════════════════════════════════════════
+
 def main():
-    args       = [a for a in sys.argv[1:] if not a.startswith("--")]
+    interactive_options([])
+
     flags      = [a for a in sys.argv[1:] if a.startswith("--")]
     apply_mode = "--apply"    in flags
     from_csv   = "--from-csv" in flags
 
-    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    reports_dir = SCRIPT_DIR / "reports"
-    reports_dir.mkdir(exist_ok=True)
+    print()
+    print("=" * 60)
+    print("  Fix Featuring Tags  v1.5")
+    print("=" * 60)
 
-    # ── --from-csv mode: apply from a previous dry-run report ──
+    # ── --from-csv mode ────────────────────────────────────────────────────────
     if from_csv:
-        chosen = pick_csv_file()
+        chosen = _pick_csv_file()
         if not chosen:
             print("No CSV file selected. Exiting.")
             sys.exit(0)
-
-        csv_path = Path(chosen)
-        if not csv_path.exists():
-            print("ERROR: File not found: %s" % csv_path)
-            sys.exit(1)
-
-        output_path = reports_dir / ("fix_featuring_%s_applied.csv" % timestamp)
-
-        print()
+        print(f"  Mode   : APPLY FROM CSV")
+        print(f"  Source : {Path(chosen).name}")
         print("=" * 60)
-        print("  Fix Featuring Tags  v1.2")
-        print("=" * 60)
-        print("  Mode   : APPLY FROM CSV")
-        print("  Source : %s" % csv_path.name)
-        print("  Output : %s" % output_path)
-        print("=" * 60)
-
         confirm = input("\n  Apply changes from this CSV? (y/n): ").strip().lower()
         if confirm != "y":
             print("  Aborted.")
             sys.exit(0)
-
-        rows = run_from_csv(csv_path)
-
-        if rows:
-            write_csv(rows, str(output_path))
-            print_summary(rows, apply_mode=True, output_path=str(output_path))
-        else:
-            print("  No results to save.")
+        try:
+            run_fix_featuring_from_csv(Path(chosen))
+        except ValueError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
         return
 
-    # ── Standard mode: full folder scan ──
+    # ── Standard folder scan mode ──────────────────────────────────────────────
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if args:
-        root_path = Path(args[0].strip('"'))
+        folder = Path(args[0].strip('"'))
     else:
-        chosen = pick_folder()
-        if not chosen:
+        folder = pick_folder("Select folder to scan for featuring tags")
+        if not folder:
             print("No folder selected. Exiting.")
             sys.exit(0)
-        root_path = Path(chosen)
 
-    if not root_path.exists() or not root_path.is_dir():
-        print("ERROR: Folder not found: %s" % root_path)
-        sys.exit(1)
-
-    suffix      = "_applied" if apply_mode else "_dry"
-    output_path = reports_dir / ("fix_featuring_%s%s.csv" % (timestamp, suffix))
-
-    print()
-    print("=" * 60)
-    print("  Fix Featuring Tags  v1.2")
-    print("=" * 60)
-    print("  Folder : %s" % root_path)
-    print("  Mode   : %s" % ("APPLY — writing tags" if apply_mode
-                              else "DRY RUN — no changes made"))
-    print("  Output : %s" % output_path)
+    print(f"  Folder : {folder}")
+    print(f"  Mode   : {'APPLY — writing tags' if apply_mode else 'DRY RUN — no changes made'}")
     print("=" * 60)
 
     if apply_mode:
@@ -534,13 +420,13 @@ def main():
             print("  Aborted.")
             sys.exit(0)
 
-    rows = run(str(root_path), apply_mode)
+    try:
+        result = run_fix_featuring(folder, apply=apply_mode)
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
-    if rows:
-        write_csv(rows, str(output_path))
-        print_summary(rows, apply_mode, str(output_path))
-    else:
-        print("  No results to save.")
+    print_summary(result["results"], apply_mode, result["report_path"])
 
 
 if __name__ == "__main__":

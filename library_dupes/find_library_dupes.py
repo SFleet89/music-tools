@@ -1,5 +1,5 @@
 """
-Library Duplicate Finder  v1.0
+Library Duplicate Finder  v1.3
 ================================
 Scans your organized music library and finds songs that exist in more than one
 top-level artist folder.
@@ -33,6 +33,25 @@ Usage:
     python find_library_dupes.py --rebuild-cache      # clear fp cache and regenerate
     python find_library_dupes.py --path "C:\\Music"   # override organized folder
     python find_library_dupes.py --config my.json     # use a different config file
+
+Changes in v1.3:
+  - PW-01: Extracted run_find_library_dupes() as GUI-callable core.
+    Parameters: organized_path, config_file, use_fp, use_filename,
+    rebuild_cache, reports_dir, progress_callback, log_callback.
+    Raises ValueError for bad paths/config. Returns dict: matches,
+    fp_warnings, errors, report_path, log_path, reports_dir.
+  - Moved module-level flags (REBUILD_CACHE, USE_FP, USE_FILENAME,
+    _cfg_flag, _path_flag, CONFIG_FILE) and all config-derived constants
+    (CFG, ORGANIZED, REPORTS_DIR, FP_ENABLED, FN_ENABLED, FP_THRESHOLD,
+    DUR_TOL, FUZZY_ENABLED, FUZZY_THRESHOLD, FPCALC_PATH, FP_MIN_LEN,
+    LSH_BANDS, LSH_BAND_SZ, MAX_THREADS) inside the run function.
+    interactive_options([]) moved inside main(). No module-level side effects.
+  - load_config() now raises ValueError instead of sys.exit().
+  - is_valid_fp() takes min_fp_length param (removes FP_MIN_LEN global dep).
+  - scan_library() takes max_threads param (removes MAX_THREADS global dep).
+  - find_fp_duplicates() takes lsh_bands, lsh_band_size params.
+  - find_filename_duplicates() takes dur_tol, fuzzy_enabled,
+    fuzzy_threshold params (removes DUR_TOL/FUZZY_* global deps).
 """
 
 import os
@@ -48,6 +67,11 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# ── music_tools_common (project root) ─────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import open_db, init_db, DB_PATH
+from music_tools_common import interactive_options
 
 # ── Optional dependencies ──────────────────────────────────────────────────────
 try:
@@ -86,54 +110,17 @@ except ImportError:
 DEFAULT_CONFIG = "library_dupes_config.json"
 SUPPORTED_EXT  = {".mp3", ".flac", ".aac", ".m4a"}
 
-# CLI flags
-REBUILD_CACHE  = "--rebuild-cache" in sys.argv
-USE_FP         = "--no-fp"       not in sys.argv
-USE_FILENAME   = "--no-filename" not in sys.argv
-
-_cfg_flag  = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
-                   if a == "--config" and i+1 < len(sys.argv)), None)
-_path_flag = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
-                   if a == "--path"   and i+1 < len(sys.argv)), None)
-
-CONFIG_FILE = _cfg_flag or DEFAULT_CONFIG
-
-
 def load_config(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        print(f"ERROR: Config file not found: {path}")
-        print("       Run from the library_dupes folder, or use --config.")
-        sys.exit(1)
+        raise ValueError(
+            "Config file not found: %s\n"
+            "Run from the library_dupes folder, or use --config." % path
+        )
     except json.JSONDecodeError as e:
-        print(f"ERROR: Could not parse config: {e}")
-        sys.exit(1)
-
-
-CFG          = load_config(CONFIG_FILE)
-_folders     = CFG.get("folders", {})
-_matching    = CFG.get("matching", {})
-_perf        = CFG.get("performance", {})
-_fp_cfg      = CFG.get("fingerprint", {})
-
-ORGANIZED    = Path(_path_flag or _folders.get("organized", ""))
-REPORTS_DIR  = Path(_folders.get("reports", "reports"))
-FP_ENABLED      = USE_FP and bool(_matching.get("fp_enabled", True))
-FN_ENABLED      = USE_FILENAME and bool(_matching.get("filename_fallback", True))
-FP_THRESHOLD    = float(_matching.get("fp_similarity_threshold", 85))
-DUR_TOL         = float(_matching.get("duration_tolerance_seconds", 2))
-FUZZY_ENABLED   = bool(_matching.get("fuzzy_enabled", True))
-FUZZY_THRESHOLD = float(_matching.get("fuzzy_threshold", 88))
-FPCALC_PATH  = _fp_cfg.get("fpcalc_path", "fpcalc")
-FP_CACHE_FILE = Path(_fp_cfg.get("fp_cache_file", "library_fp_cache.json"))
-FP_MIN_LEN   = int(_fp_cfg.get("min_fp_length", 50))
-LSH_BANDS    = int(_fp_cfg.get("lsh_bands", 20))
-LSH_BAND_SZ  = int(_fp_cfg.get("lsh_band_size", 6))
-
-_max_t       = int(_perf.get("max_threads", 0))
-MAX_THREADS  = _max_t if _max_t > 0 else (os.cpu_count() or 4)
+        raise ValueError("Could not parse config file %s: %s" % (path, e))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -224,7 +211,7 @@ def get_file_info(path: Path) -> dict | None:
     }
 
 
-def scan_library(root: Path, errors: list) -> list[dict]:
+def scan_library(root: Path, errors: list, max_threads: int = 4) -> list[dict]:
     """Recursively scan root for music files. Appends scan errors to errors list."""
     all_paths = []
     try:
@@ -249,7 +236,7 @@ def scan_library(root: Path, errors: list) -> list[dict]:
             errors.append(f"SCAN ERROR: {path} — {e}")
             return None
 
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = {executor.submit(process, p): p for p in all_paths}
         for future in as_completed(futures):
             try:
@@ -290,9 +277,9 @@ def get_fingerprint(path: Path, fpcalc_path: str) -> str | None:
     return None
 
 
-def is_valid_fp(fp: str) -> bool:
+def is_valid_fp(fp: str, min_fp_length: int = 50) -> bool:
     try:
-        return bool(fp) and len(fp.split(",")) >= FP_MIN_LEN
+        return bool(fp) and len(fp.split(",")) >= min_fp_length
     except Exception:
         return False
 
@@ -312,29 +299,14 @@ def fp_similarity(fp1: str, fp2: str) -> float:
         return 0.0
 
 
-def load_fp_cache(path: Path) -> dict:
-    if path.exists():
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def save_fp_cache(cache: dict, path: Path):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(cache, f, indent=2)
-    except Exception as e:
-        print(f"  WARNING: Could not save fingerprint cache: {e}")
-
-
-def build_fp_index(files: list, fpcalc_path: str, cache: dict, errors: list) -> tuple[list, list]:
+def build_fp_index(files: list, fpcalc_path: str, conn, errors: list,
+                   min_fp_length: int = 50) -> tuple[list, list]:
     """
-    Generate fingerprints for all files.
+    Generate fingerprints for all files, caching results in the shared
+    music_cache.db fp_cache table (via music_tools_common).
+
     Returns (fp_index, fp_warnings).
-    fp_index  = list of {file, fingerprint} for valid files
+    fp_index    = list of {file, fingerprint} for valid files
     fp_warnings = list of (path_str, reason) for invalid/failed files
     """
     index    = []
@@ -343,16 +315,42 @@ def build_fp_index(files: list, fpcalc_path: str, cache: dict, errors: list) -> 
 
     for f in files:
         path_str = str(f["path"])
-        fp = cache.get(path_str) or get_fingerprint(f["path"], fpcalc_path)
+        fp = None
 
+        # ── Cache lookup ───────────────────────────────────────────────────────
+        try:
+            actual_mtime = f["path"].stat().st_mtime
+        except Exception:
+            actual_mtime = 0.0
+
+        row = conn.execute(
+            "SELECT fingerprint, mtime FROM fp_cache WHERE path_str = ?",
+            (path_str,)
+        ).fetchone()
+
+        if row and abs(row["mtime"] - actual_mtime) < 1.0:
+            # Cache hit — use stored fingerprint (may be "" for a known failure)
+            fp = row["fingerprint"] or None
+        else:
+            # Cache miss or stale — compute and store
+            fp = get_fingerprint(f["path"], fpcalc_path)
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO fp_cache "
+                    "(path_str, mtime, fingerprint, fp_duration) VALUES (?, ?, ?, ?)",
+                    (path_str, actual_mtime, fp or "", f.get("duration"))
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+        # ── Classify result ────────────────────────────────────────────────────
         if fp:
-            cache[path_str] = fp
-            if is_valid_fp(fp):
+            if is_valid_fp(fp, min_fp_length=min_fp_length):
                 index.append({"file": f, "fingerprint": fp})
             else:
                 warnings.append((path_str, f"short fingerprint ({len(fp.split(','))} integers) — file may be corrupted or silent"))
         else:
-            cache[path_str] = ""
             warnings.append((path_str, "fingerprint generation failed"))
             errors.append(f"FP ERROR: {path_str} — fingerprint generation failed")
 
@@ -480,6 +478,9 @@ def find_filename_duplicates(
     files: list[dict],
     root: Path,
     existing_pairs: set,
+    dur_tol: float = 2.0,
+    fuzzy_enabled: bool = True,
+    fuzzy_threshold: float = 88.0,
 ) -> list[dict]:
     """
     Find cross-folder duplicates by:
@@ -521,7 +522,7 @@ def find_filename_duplicates(
         # Duration check
         dur_a = fa.get("metadata", {}).get("duration")
         dur_b = fb.get("metadata", {}).get("duration")
-        if dur_a and dur_b and abs(dur_a - dur_b) > DUR_TOL:
+        if dur_a and dur_b and abs(dur_a - dur_b) > dur_tol:
             return
         seen_pairs.add(key)
         matches.append({
@@ -561,7 +562,7 @@ def find_filename_duplicates(
 
     # Fuzzy metadata matching — catches slight tag inconsistencies
     # e.g. "The Beatles" vs "Beatles", "feat." vs "ft."
-    if FUZZY_ENABLED and len(tagged_files) > 1:
+    if fuzzy_enabled and len(tagged_files) > 1:
         for i in range(len(tagged_files)):
             artist_i, title_i, fi = tagged_files[i]
             if is_generic_stem(title_i):
@@ -576,7 +577,7 @@ def find_filename_duplicates(
                 # Fuzzy check — title must be very similar, artist reasonably similar
                 title_score  = _fuzzy_score(title_i, title_j)
                 artist_score = _fuzzy_score(artist_i, artist_j)
-                if title_score >= FUZZY_THRESHOLD and artist_score >= FUZZY_THRESHOLD:
+                if title_score >= fuzzy_threshold and artist_score >= fuzzy_threshold:
                     add_match(fi, fj, f"metadata tags (fuzzy {title_score:.0f}%)")
 
     return matches
@@ -592,12 +593,14 @@ def find_fp_duplicates(
     threshold: float,
     dur_tol: float,
     errors: list,
+    lsh_bands: int = 20,
+    lsh_band_size: int = 6,
 ) -> tuple[list[dict], set]:
     """
     Compare candidate pairs from LSH, return confirmed cross-folder duplicates.
     Returns (matches, seen_path_pairs).
     """
-    candidates = find_fp_candidates(fp_index, LSH_BANDS, LSH_BAND_SZ)
+    candidates = find_fp_candidates(fp_index, lsh_bands, lsh_band_size)
     matches     = []
     seen_pairs  = set()
 
@@ -735,183 +738,300 @@ def write_fp_warnings_csv(path: Path, warnings: list, root: Path):
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
-def main():
-    timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    errors     = []   # accumulated error list — written to log at end
+def run_find_library_dupes(
+    organized_path=None,
+    config_file=None,
+    use_fp=True,
+    use_filename=True,
+    rebuild_cache=False,
+    reports_dir=None,
+    progress_callback=None,
+    log_callback=None,
+):
+    """
+    GUI-callable core for Library Duplicate Finder.
+
+    Parameters
+    ----------
+    organized_path  : str, Path, or None — override folders.organized from config.
+    config_file     : str or None — path to JSON config (default: library_dupes_config.json).
+    use_fp          : bool — enable audio fingerprint matching (default True).
+    use_filename    : bool — enable filename/metadata matching (default True).
+    rebuild_cache   : bool — clear and rebuild the fingerprint cache.
+    reports_dir     : str, Path, or None — override reports directory from config.
+    progress_callback : callable(current, total, filename) or None.
+    log_callback    : callable(message) or None — key status lines sent here.
+
+    Returns
+    -------
+    dict with keys:
+        matches     — list of match dicts (one per duplicate pair found)
+        fp_warnings — list of (path_str, reason) for fingerprinting failures
+        errors      — list of error strings accumulated during the run
+        report_path — Path to the main CSV report
+        log_path    — Path to the log file
+        reports_dir — Path to the reports directory used
+    """
+    def _log(msg):
+        print(msg)
+        if log_callback:
+            try:
+                log_callback(msg)
+            except Exception:
+                pass
+
+    # -- Load config -----------------------------------------------------------
+    cfg_path = config_file or DEFAULT_CONFIG
+    cfg      = load_config(cfg_path)   # raises ValueError on missing/bad file
+
+    _folders = cfg.get("folders",     {})
+    _matching = cfg.get("matching",   {})
+    _perf    = cfg.get("performance", {})
+    _fp_cfg  = cfg.get("fingerprint", {})
+
+    # Config-derived settings
+    fp_enabled      = use_fp       and bool(_matching.get("fp_enabled",           True))
+    fn_enabled      = use_filename and bool(_matching.get("filename_fallback",     True))
+    fp_threshold    = float(_matching.get("fp_similarity_threshold",  85))
+    dur_tol         = float(_matching.get("duration_tolerance_seconds", 2))
+    fuzzy_enabled   = bool(_matching.get("fuzzy_enabled",             True))
+    fuzzy_threshold = float(_matching.get("fuzzy_threshold",           88))
+    fpcalc_path     = _fp_cfg.get("fpcalc_path", "fpcalc")
+    fp_min_len      = int(_fp_cfg.get("min_fp_length",  50))
+    lsh_bands_n     = int(_fp_cfg.get("lsh_bands",      20))
+    lsh_band_sz     = int(_fp_cfg.get("lsh_band_size",   6))
+    _max_t          = int(_perf.get("max_threads", 0))
+    max_threads     = _max_t if _max_t > 0 else (os.cpu_count() or 4)
+
+    # -- Validate inputs -------------------------------------------------------
+    if not fp_enabled and not fn_enabled:
+        raise ValueError("Both fingerprint and filename matching are disabled. Nothing to do.")
+
+    organized = Path(organized_path or _folders.get("organized", ""))
+    if not organized or not organized.exists():
+        raise ValueError("Organized folder not found: %s\n"
+                         "Set folders.organized in config or pass organized_path." % organized)
+
+    rdir = Path(reports_dir) if reports_dir else Path(_folders.get("reports", "reports"))
+    if not rdir.is_absolute():
+        rdir = Path(path).parent / rdir   # relative to library_dupes folder
+    rdir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    errors     = []
     fp_warnings = []
 
-    # ── Validate config ────────────────────────────────────────────────────────
-    if not ORGANIZED or not ORGANIZED.exists():
-        print(f"\nERROR: Organized folder not found: {ORGANIZED}")
-        print("       Set 'folders.organized' in library_dupes_config.json or use --path.\n")
-        sys.exit(1)
+    # -- Logging ---------------------------------------------------------------
+    log_path = rdir / ("library_dupes_log_%s.txt" % timestamp)
+    logger   = logging.getLogger("find_library_dupes_%s" % timestamp)
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    fh = logging.FileHandler(str(log_path), encoding="utf-8")
+    fh.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(fh)
 
-    if not FP_ENABLED and not FN_ENABLED:
-        print("\nERROR: Both --no-fp and --no-filename specified. Nothing to do.\n")
-        sys.exit(1)
+    def log(msg):
+        logger.info(msg)
+        _log(msg)
 
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # ── Set up logging ─────────────────────────────────────────────────────────
-    log_path = REPORTS_DIR / f"library_dupes_log_{timestamp}.txt"
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        handlers=[
-            logging.FileHandler(log_path, encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
-    log = logging.getLogger()
-
-    # ── Header ─────────────────────────────────────────────────────────────────
+    # -- Header ----------------------------------------------------------------
     mode_parts = []
-    if FP_ENABLED:   mode_parts.append("fingerprint")
-    if FN_ENABLED:   mode_parts.append("filename")
+    if fp_enabled: mode_parts.append("fingerprint")
+    if fn_enabled: mode_parts.append("filename")
     mode_label = " + ".join(mode_parts)
 
-    log.info("")
-    log.info("=" * 60)
-    log.info("Library Duplicate Finder  v1.0")
-    log.info("=" * 60)
-    log.info(f"  Started   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    log.info(f"  Folder    : {ORGANIZED}")
-    log.info(f"  Mode      : {mode_label}")
-    log.info(f"  Threads   : {MAX_THREADS}")
-    if FP_ENABLED:
-        log.info(f"  FP thresh : {FP_THRESHOLD}%")
-        log.info(f"  FP cache  : {FP_CACHE_FILE}")
-    log.info("=" * 60)
-    log.info("")
+    log("")
+    log("=" * 60)
+    log("Library Duplicate Finder  v1.3")
+    log("=" * 60)
+    log("  Started   : %s" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    log("  Folder    : %s" % organized)
+    log("  Mode      : %s" % mode_label)
+    log("  Threads   : %d" % max_threads)
+    if fp_enabled:
+        log("  FP thresh : %.0f%%" % fp_threshold)
+        log("  FP cache  : %s (fp_cache table)" % DB_PATH)
+    log("=" * 60)
+    log("")
 
-    # ── Scan library ───────────────────────────────────────────────────────────
-    log.info("── Scanning library ────────────────────────────────────────")
-    log.info("")
-    files = scan_library(ORGANIZED, errors)
-    log.info(f"\n  Files found : {len(files):,}")
+    # -- Scan library ----------------------------------------------------------
+    log("-- Scanning library ------------------------------------------------")
+    log("")
+    files = scan_library(organized, errors, max_threads=max_threads)
+    log("\n  Files found : %d" % len(files))
 
     if not files:
-        log.info("\n  No files found. Check your organized folder path.\n")
-        sys.exit(0)
+        log("\n  No files found. Check your organized folder path.\n")
+        return {
+            "matches":     [],
+            "fp_warnings": [],
+            "errors":      errors,
+            "report_path": None,
+            "log_path":    log_path,
+            "reports_dir": rdir,
+        }
 
-    # ── Fingerprint pass ───────────────────────────────────────────────────────
+    # -- Fingerprint pass ------------------------------------------------------
     all_matches  = []
     fp_seen_pairs = set()
 
-    if FP_ENABLED:
-        log.info("")
-        log.info("── Fingerprint matching ────────────────────────────────────")
-        log.info("")
+    if fp_enabled:
+        log("")
+        log("-- Fingerprint matching --------------------------------------------")
+        log("")
 
-        fpcalc_ok = check_fpcalc(FPCALC_PATH)
+        fpcalc_ok = check_fpcalc(fpcalc_path)
         if not fpcalc_ok:
-            msg = f"  fpcalc not found at '{FPCALC_PATH}' — skipping fingerprint matching."
-            log.info(msg)
-            errors.append(f"CONFIG WARNING: {msg.strip()}")
+            msg = "  fpcalc not found at '%s' -- skipping fingerprint matching." % fpcalc_path
+            log(msg)
+            errors.append("CONFIG WARNING: %s" % msg.strip())
         else:
-            log.info(f"  fpcalc OK. Loading cache...")
-            if REBUILD_CACHE and FP_CACHE_FILE.exists():
-                FP_CACHE_FILE.unlink()
-                log.info("  Fingerprint cache cleared.")
+            log("  fpcalc OK. Opening fingerprint cache (music_cache.db)...")
+            conn = open_db()
+            init_db(conn)
 
-            fp_cache = load_fp_cache(FP_CACHE_FILE)
-            log.info(f"  Cache entries loaded: {len(fp_cache):,}")
-            log.info("")
+            if rebuild_cache:
+                conn.execute("DELETE FROM fp_cache")
+                conn.commit()
+                log("  Fingerprint cache cleared.")
 
-            fp_index, fp_warnings = build_fp_index(files, FPCALC_PATH, fp_cache, errors)
-            save_fp_cache(fp_cache, FP_CACHE_FILE)
+            cache_count = conn.execute("SELECT COUNT(*) FROM fp_cache").fetchone()[0]
+            log("  Cache entries loaded: %d" % cache_count)
+            log("")
 
-            log.info(f"\n  Valid fingerprints : {len(fp_index):,}")
-            log.info(f"  FP warnings        : {len(fp_warnings):,}")
+            fp_index, fp_warnings = build_fp_index(
+                files, fpcalc_path, conn, errors, min_fp_length=fp_min_len
+            )
+
+            log("\n  Valid fingerprints : %d" % len(fp_index))
+            log("  FP warnings        : %d" % len(fp_warnings))
 
             if fp_warnings:
-                log.info(f"\n  WARNING: {len(fp_warnings)} file(s) produced invalid fingerprints:")
+                log("\n  WARNING: %d file(s) produced invalid fingerprints:" % len(fp_warnings))
                 for path_str, reason in fp_warnings:
-                    log.info(f"    ! {Path(path_str).name} — {reason}")
-                    log.info(f"      {path_str}")
+                    log("    ! %s -- %s" % (Path(path_str).name, reason))
+                    log("      %s" % path_str)
 
-            log.info("")
-            log.info(f"  Finding candidates with LSH ({LSH_BANDS} bands × {LSH_BAND_SZ} integers)...")
+            log("")
+            log("  Finding candidates with LSH (%d bands x %d integers)..." % (lsh_bands_n, lsh_band_sz))
             fp_matches, fp_seen_pairs = find_fp_duplicates(
-                fp_index, ORGANIZED, FP_THRESHOLD, DUR_TOL, errors
+                fp_index, organized, fp_threshold, dur_tol, errors,
+                lsh_bands=lsh_bands_n, lsh_band_size=lsh_band_sz,
             )
             all_matches.extend(fp_matches)
-            log.info(f"\n  Fingerprint matches found : {len(fp_matches):,}")
+            log("\n  Fingerprint matches found : %d" % len(fp_matches))
 
-    # ── Filename fallback ──────────────────────────────────────────────────────
-    if FN_ENABLED:
-        log.info("")
-        log.info("── Filename + metadata matching ────────────────────────────")
-        log.info("")
-
-        fn_matches = find_filename_duplicates(files, ORGANIZED, fp_seen_pairs)
+    # -- Filename fallback -----------------------------------------------------
+    if fn_enabled:
+        log("")
+        log("-- Filename + metadata matching ------------------------------------")
+        log("")
+        fn_matches = find_filename_duplicates(
+            files, organized, fp_seen_pairs,
+            dur_tol=dur_tol,
+            fuzzy_enabled=fuzzy_enabled,
+            fuzzy_threshold=fuzzy_threshold,
+        )
         all_matches.extend(fn_matches)
-        log.info(f"  Filename/metadata matches found : {len(fn_matches):,}")
+        log("  Filename/metadata matches found : %d" % len(fn_matches))
 
-    # ── Sort results ───────────────────────────────────────────────────────────
-    # Sort by match method, then by File A top folder, then filename
+    # -- Sort results ----------------------------------------------------------
     all_matches.sort(key=lambda m: (
         m["method"],
-        top_level_folder(m["file_a"]["path"], ORGANIZED),
+        top_level_folder(m["file_a"]["path"], organized),
         m["file_a"]["filename"],
     ))
 
-    # ── Write reports ──────────────────────────────────────────────────────────
-    log.info("")
-    log.info("── Writing reports ─────────────────────────────────────────")
-    log.info("")
+    # -- Write reports ---------------------------------------------------------
+    log("")
+    log("-- Writing reports -------------------------------------------------")
+    log("")
 
-    # Main CSV
-    csv_path = REPORTS_DIR / f"library_dupes_{timestamp}.csv"
+    csv_path = rdir / ("library_dupes_%s.csv" % timestamp)
     try:
-        write_csv(csv_path, all_matches, ORGANIZED)
-        log.info(f"  Report saved   : {csv_path}")
+        write_csv(csv_path, all_matches, organized)
+        log("  Report saved   : %s" % csv_path)
     except Exception as e:
-        errors.append(f"CSV WRITE ERROR: {e}")
-        log.info(f"  ERROR writing CSV: {e}")
+        errors.append("CSV WRITE ERROR: %s" % e)
+        log("  ERROR writing CSV: %s" % e)
 
-    # FP warnings CSV
     if fp_warnings:
-        warn_path = REPORTS_DIR / f"library_dupes_fp_warnings_{timestamp}.csv"
+        warn_path = rdir / ("library_dupes_fp_warnings_%s.csv" % timestamp)
         try:
-            write_fp_warnings_csv(warn_path, fp_warnings, ORGANIZED)
-            log.info(f"  FP warnings    : {warn_path}")
+            write_fp_warnings_csv(warn_path, fp_warnings, organized)
+            log("  FP warnings    : %s" % warn_path)
         except Exception as e:
-            errors.append(f"FP WARNINGS CSV ERROR: {e}")
+            errors.append("FP WARNINGS CSV ERROR: %s" % e)
 
-    # Error log
     if errors:
-        err_path = REPORTS_DIR / f"library_dupes_errors_{timestamp}.txt"
+        err_path = rdir / ("library_dupes_errors_%s.txt" % timestamp)
         try:
-            with open(err_path, "w", encoding="utf-8") as f:
-                f.write(f"Library Duplicate Finder — Error Log\n")
-                f.write(f"Run: {timestamp}\n")
-                f.write("=" * 60 + "\n\n")
+            with open(err_path, "w", encoding="utf-8") as ef:
+                ef.write("Library Duplicate Finder -- Error Log\n")
+                ef.write("Run: %s\n" % timestamp)
+                ef.write("=" * 60 + "\n\n")
                 for e in errors:
-                    f.write(e + "\n")
-            log.info(f"  Error log      : {err_path}  ({len(errors)} error(s))")
+                    ef.write(e + "\n")
+            log("  Error log      : %s  (%d error(s))" % (err_path, len(errors)))
         except Exception as e:
-            log.info(f"  WARNING: Could not write error log: {e}")
+            log("  WARNING: Could not write error log: %s" % e)
 
-    # ── Summary ────────────────────────────────────────────────────────────────
+    # -- Summary ---------------------------------------------------------------
     fp_count = sum(1 for m in all_matches if "fingerprint" in m["method"])
     fn_count = sum(1 for m in all_matches if "fingerprint" not in m["method"])
 
-    log.info("")
-    log.info("=" * 60)
-    log.info("SUMMARY")
-    log.info(f"  Files scanned              : {len(files):,}")
-    log.info(f"  Cross-folder duplicates    : {len(all_matches):,}")
-    if FP_ENABLED:
-        log.info(f"    — by fingerprint         : {fp_count:,}")
-        log.info(f"    — FP warnings            : {len(fp_warnings):,}")
-    if FN_ENABLED:
-        log.info(f"    — by filename/metadata   : {fn_count:,}")
-    log.info(f"  Errors logged              : {len(errors):,}")
-    log.info(f"\n  Report : {csv_path}")
-    log.info(f"  Log    : {log_path}")
-    log.info("=" * 60)
-    log.info("")
+    log("")
+    log("=" * 60)
+    log("SUMMARY")
+    log("  Files scanned              : %d" % len(files))
+    log("  Cross-folder duplicates    : %d" % len(all_matches))
+    if fp_enabled:
+        log("    -- by fingerprint        : %d" % fp_count)
+        log("    -- FP warnings           : %d" % len(fp_warnings))
+    if fn_enabled:
+        log("    -- by filename/metadata  : %d" % fn_count)
+    log("  Errors logged              : %d" % len(errors))
+    log("\n  Report : %s" % csv_path)
+    log("  Log    : %s" % log_path)
+    log("=" * 60)
+    log("")
+
+    return {
+        "matches":     all_matches,
+        "fp_warnings": fp_warnings,
+        "errors":      errors,
+        "report_path": csv_path,
+        "log_path":    log_path,
+        "reports_dir": rdir,
+    }
+
+
+def main():
+    # -- Flag parsing ----------------------------------------------------------
+    REBUILD_CACHE = "--rebuild-cache" in sys.argv
+    USE_FP        = "--no-fp"       not in sys.argv
+    USE_FILENAME  = "--no-filename" not in sys.argv
+
+    _cfg_flag  = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
+                       if a == "--config" and i+1 < len(sys.argv)), None)
+    _path_flag = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
+                       if a == "--path"   and i+1 < len(sys.argv)), None)
+
+    interactive_options([
+        ("--rebuild-cache", "Rebuild cache -- ignore cached fingerprints, re-fingerprint all"),
+    ])
+
+    try:
+        run_find_library_dupes(
+            organized_path = _path_flag,
+            config_file    = _cfg_flag or DEFAULT_CONFIG,
+            use_fp         = USE_FP,
+            use_filename   = USE_FILENAME,
+            rebuild_cache  = REBUILD_CACHE,
+        )
+    except ValueError as exc:
+        print("ERROR: %s" % exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

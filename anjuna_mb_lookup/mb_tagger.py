@@ -1,5 +1,5 @@
 """
-MusicBrainz Tagger  v1.0
+MusicBrainz Tagger  v1.4
 ==========================
 Generic version of anjuna_tagger — works with any lookup CSV that has
 a folder_path and mbid column. Reads the CSV, fetches release data from
@@ -23,6 +23,7 @@ Output:
 """
 
 import sys
+from music_tools_common import interactive_options
 import os
 import re
 import csv
@@ -49,33 +50,15 @@ except ImportError:
     print("       Run: pip install mutagen")
     sys.exit(1)
 
+# ── Shared module ──────────────────────────────────────────────────────────────
+from music_mb_common import (
+    SUPPORTED_EXTENSIONS, MB_API_BASE, USER_AGENT, REQUEST_DELAY,
+    mb_get,
+)
+
 # ── Config ─────────────────────────────────────────────────────────────────────
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
-MB_API_BASE          = "https://musicbrainz.org/ws/2"
-MB_COVER_API         = "https://coverartarchive.org/release"
-USER_AGENT           = "MBTagger/1.0 ( music-tools )"
-REQUEST_DELAY        = 1.1
-SCRIPT_DIR           = Path(__file__).parent
-
-# ── Flags ──────────────────────────────────────────────────────────────────────
-APPLY    = "--apply"    in sys.argv
-SKIP_ART = "--skip-art" in sys.argv
-DRY_RUN  = not APPLY
-
-# ── Rate limiting ──────────────────────────────────────────────────────────────
-_last_request = 0
-
-def mb_get(url):
-    global _last_request
-    elapsed = time.time() - _last_request
-    if elapsed < REQUEST_DELAY:
-        time.sleep(REQUEST_DELAY - elapsed)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    _last_request = time.time()
-    return data
-
+MB_COVER_API = "https://coverartarchive.org/release"
+SCRIPT_DIR   = Path(__file__).parent
 
 def mb_fetch_release(mbid):
     params = urllib.parse.urlencode({
@@ -383,9 +366,93 @@ def print_summary(results, dry_run, output_path):
     print("=" * 60)
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_mb_tagger(
+    csv_path,
+    apply: bool = False,
+    skip_art: bool = False,
+    reports_dir=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Tag album folders from a mb_lookup CSV.
+
+    Args:
+        csv_path:          Path to lookup CSV (folder_path + mbid columns).
+        apply:             False = dry run; True = write tags and rename folders.
+        skip_art:          True = skip cover art download.
+        reports_dir:       Where to save; defaults to <script folder>/../reports.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: tagged, would_tag, partial, skipped, errors, results (list),
+              report_path (Path)
+
+    Raises:
+        ValueError: csv_path does not exist.
+    """
+    from collections import Counter
+    log      = log_callback or print
+    csv_path = Path(csv_path)
+
+    if not csv_path.exists():
+        raise ValueError(f"CSV not found: {csv_path}")
+
+    dry_run  = not apply
+    _reports = Path(reports_dir) if reports_dir else SCRIPT_DIR.parent / "reports"
+    _reports.mkdir(parents=True, exist_ok=True)
+    ts          = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix      = "_dry" if dry_run else "_applied"
+    output_path = _reports / f"mb_tagger{suffix}_{ts}.csv"
+
+    all_rows   = load_csv(str(csv_path))
+    actionable = filter_actionable(all_rows)
+    log(f"  Total rows in CSV   : {len(all_rows)}")
+    log(f"  Rows with MBID      : {len(actionable)}")
+    log(f"  Rows without MBID   : {len(all_rows) - len(actionable)} (skipped)")
+
+    results = []
+    total   = len(actionable)
+    for idx, row in enumerate(actionable, 1):
+        folder_name = row.get("folder", "")
+        if progress_callback:
+            progress_callback(idx, total, folder_name)
+        log(f"  [{idx}/{total}]  {folder_name}")
+        result = process_folder(row, dry_run, skip_art)
+        sym = {"tagged": "\u2713", "would_tag": "~", "partial": "!", "skipped": "-", "error": "\u2717"}.get(result["status"], "?")
+        if result["status"] in ("tagged", "would_tag"):
+            log(f"          {sym} {result['files_tagged']} file(s) \u2192 {result['new_folder']}")
+        else:
+            log(f"          {sym} {result['notes']}")
+        results.append(result)
+
+    write_report(results, str(output_path))
+    counts = Counter(r["status"] for r in results)
+    return {
+        "tagged":      counts.get("tagged", 0),
+        "would_tag":   counts.get("would_tag", 0),
+        "partial":     counts.get("partial", 0),
+        "skipped":     counts.get("skipped", 0),
+        "errors":      counts.get("error", 0),
+        "results":     results,
+        "report_path": output_path,
+    }
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
+    interactive_options([])
+    APPLY    = "--apply"    in sys.argv
+    SKIP_ART = "--skip-art" in sys.argv
+    DRY_RUN  = not APPLY
+
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
 
     if not args:
@@ -396,7 +463,7 @@ def main():
             chosen = filedialog.askopenfilename(
                 title="Select lookup CSV to tag from",
                 filetypes=[("CSV files","*.csv"),("All files","*.*")],
-                initialdir=str(SCRIPT_DIR / "reports"),
+                initialdir=str(SCRIPT_DIR.parent / "reports"),
             )
             root.destroy()
             if not chosen: print("No file selected. Exiting."); sys.exit(0)
@@ -410,14 +477,14 @@ def main():
         print("ERROR: CSV not found: %s" % csv_path); sys.exit(1)
 
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    reports_dir = SCRIPT_DIR / "reports"
+    reports_dir = SCRIPT_DIR.parent / "reports"
     reports_dir.mkdir(exist_ok=True)
     suffix      = "_dry" if DRY_RUN else "_applied"
     output_path = reports_dir / ("mb_tagger%s_%s.csv" % (suffix, timestamp))
 
     print()
     print("=" * 60)
-    print("  MusicBrainz Tagger  v1.0")
+    print("  MusicBrainz Tagger  v1.3")
     print("=" * 60)
     print("  CSV       : %s" % csv_path)
     print("  Mode      : %s" % ("DRY RUN — nothing will be changed" if DRY_RUN else "LIVE — files will be tagged"))

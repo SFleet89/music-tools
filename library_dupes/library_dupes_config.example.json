@@ -30,8 +30,7 @@
   "fingerprint": {
     "_comment": "fpcalc_path: path to fpcalc.exe, or just 'fpcalc' if in your PATH",
     "fpcalc_path": "fpcalc",
-    "_comment2": "fp_cache_file: fingerprint cache \u2014 can be shared with find_music_duplicates.py",
-    "fp_cache_file": "C:\\Music\\tools\\duplicate_finder\\music_fp_cache.json",
+    "_comment2": "Fingerprint cache is stored in the shared music_cache.db (fp_cache table). No separate file needed.",
     "_comment3": "min_fp_length: fingerprints shorter than this are considered invalid",
     "min_fp_length": 50,
     "_comment4": "lsh_bands: LSH bands for candidate detection",

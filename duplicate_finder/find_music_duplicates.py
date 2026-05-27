@@ -1,5 +1,5 @@
 """
-Music Duplicate Finder & Mover  v3.1
+Music Duplicate Finder & Mover  v3.12
 ======================================
 Compares an unsorted music folder against an organized library and categorises
 every file into one of four buckets:
@@ -29,6 +29,9 @@ Features
   • CSV report                   (full record of every file and action)
   • "Why not exact" reasons      (explains why duplicates didn't auto-move)
   • AcoustID fingerprint pass    (optional: catches renamed/retagged duplicates)
+  • AcoustID tag short-circuit   (instant match when both files share acoustid_id tag)
+  • Duration tolerance 5 s       (was 2 s — catches same recording from different releases)
+  • Near-miss logging            (--near-miss: writes a CSV of scores 50–84% to explain missed matches)
 
 Supports: MP3, FLAC, AAC/M4A
 
@@ -40,13 +43,16 @@ Optional (for fingerprint matching):
     No API key required — fingerprints are compared locally.
 
 Usage:
-    python find_music_duplicates.py                    # normal run
-    python find_music_duplicates.py --dry-run          # preview only
-    python find_music_duplicates.py --dry-run --no-review  # preview + skip Notepad (use viewer instead)
-    python find_music_duplicates.py --clear-cache      # delete metadata cache and start fresh
-    python find_music_duplicates.py --clear-fp-cache   # delete fingerprint cache and regenerate
-    python find_music_duplicates.py --clear-resume     # discard saved resume state
-    python find_music_duplicates.py --config my.json   # use a custom config file
+    python find_music_duplicates.py                               # normal run (uses config unsorted folder)
+    python find_music_duplicates.py --pick-source                 # pick the comparison folder via dialog
+    python find_music_duplicates.py --source "C:\\My\\Folder"      # specify the comparison folder directly
+    python find_music_duplicates.py --dry-run                     # preview only
+    python find_music_duplicates.py --dry-run --no-review         # preview + skip Notepad (use viewer instead)
+    python find_music_duplicates.py --clear-cache                 # delete metadata cache and start fresh
+    python find_music_duplicates.py --clear-fp-cache              # delete fingerprint cache and regenerate
+    python find_music_duplicates.py --clear-resume                # discard saved resume state
+    python find_music_duplicates.py --config my.json              # use a custom config file
+    python find_music_duplicates.py --near-miss                   # write a near-miss CSV (scores between 50–84%) for debugging misses
 """
 
 import os
@@ -56,12 +62,15 @@ import json
 import shutil
 import logging
 import tempfile
-import hashlib
 import subprocess
 import threading
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import DB_PATH, open_db, init_db, upsert_metadata_rows, pick_folder, SUPPORTED_EXTENSIONS
+from music_tools_common import interactive_options, load_config
 
 # ── Optional dependencies with graceful fallbacks ──────────────────────────
 
@@ -97,83 +106,15 @@ except ImportError:
 #  CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 
-DEFAULT_CONFIG_FILE = "music_config.json"
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
-DRY_RUN          = "--dry-run"         in sys.argv
-CLEAR_CACHE      = "--clear-cache"     in sys.argv
-CLEAR_RESUME     = "--clear-resume"    in sys.argv
-CLEAR_FP_CACHE   = "--clear-fp-cache"  in sys.argv
-NO_REVIEW        = "--no-review"       in sys.argv
+DEFAULT_CONFIG_FILE = str(Path(__file__).parent.parent / "music_config.json")
 
-# Parse --config flag
-_cfg_flag = next((sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == "--config" and i + 1 < len(sys.argv)), None)
-CONFIG_FILE = _cfg_flag or DEFAULT_CONFIG_FILE
-
-# Parse --confirm flag  (path to a dry-run CSV to use as selection source)
-_confirm_flag = next(
-    (sys.argv[i + 1] for i, a in enumerate(sys.argv)
-     if a == "--confirm" and i + 1 < len(sys.argv)),
-    None,
-)
-CONFIRM_CSV = _confirm_flag
-
-
-def load_config(path: str) -> dict:
-    """Load and validate the JSON config file."""
-    cfg_path = Path(path)
-    if not cfg_path.exists():
-        print(f"ERROR: Config file not found: {cfg_path}")
-        print(f"       Please create '{DEFAULT_CONFIG_FILE}' next to this script,")
-        print(f"       or download the sample config included with the script.")
-        sys.exit(1)
-
-    with open(cfg_path, encoding="utf-8") as f:
-        cfg = json.load(f)
-
+def _validate_config(cfg: dict) -> None:
+    """Raise ValueError if the config is missing any required folder keys."""
     folders  = cfg.get("folders", {})
     required = ["organized", "unsorted", "duplicates", "better_quality"]
     for key in required:
         if not folders.get(key):
-            print(f"ERROR: Config missing folders.{key}")
-            sys.exit(1)
-
-    return cfg
-
-
-CFG = load_config(CONFIG_FILE)
-
-ORGANIZED_FOLDER      = CFG["folders"]["organized"]
-UNSORTED_FOLDER       = CFG["folders"]["unsorted"]
-DUPLICATES_FOLDER     = CFG["folders"]["duplicates"]
-BETTER_QUALITY_FOLDER = CFG["folders"]["better_quality"]
-
-_match_cfg            = CFG.get("matching", {})
-DEFAULT_MODE          = str(_match_cfg.get("mode", "4"))
-FUZZY_ENABLED         = bool(_match_cfg.get("fuzzy_enabled", True))
-FUZZY_THRESHOLD       = float(_match_cfg.get("fuzzy_threshold", 88))
-USE_DURATION          = bool(_match_cfg.get("use_duration", True))
-DURATION_TOLERANCE    = float(_match_cfg.get("duration_tolerance_seconds", 2))
-EXACT_SIZE_TOLERANCE  = float(_match_cfg.get("exact_match_size_tolerance_percent", 3.0)) / 100.0
-
-_perf_cfg             = CFG.get("performance", {})
-_max_threads          = int(_perf_cfg.get("max_threads", 0))
-MAX_THREADS           = _max_threads if _max_threads > 0 else (os.cpu_count() or 4)
-CACHE_ENABLED         = bool(_perf_cfg.get("cache_enabled", True))
-CACHE_FILE            = _perf_cfg.get("cache_file", "music_cache.json")
-
-_resume_cfg           = CFG.get("resume", {})
-RESUME_ENABLED        = bool(_resume_cfg.get("enabled", True))
-RESUME_FILE           = _resume_cfg.get("resume_file", "music_resume.json")
-
-_out_cfg              = CFG.get("output", {})
-_log_folder           = _out_cfg.get("log_folder", "")
-LOG_FOLDER            = _log_folder if _log_folder else DUPLICATES_FOLDER
-
-_acoustid_cfg         = CFG.get("acoustid", {})
-ACOUSTID_OFFER        = bool(_acoustid_cfg.get("enabled", False))
-FPCALC_PATH           = _acoustid_cfg.get("fpcalc_path", "fpcalc")
-FP_SIMILARITY_THRESHOLD = float(_acoustid_cfg.get("similarity_threshold", 85))
-FP_CACHE_FILE         = _acoustid_cfg.get("fp_cache_file", "music_fp_cache.json")
+            raise ValueError(f"Config missing folders.{key}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -198,29 +139,94 @@ def make_pbar(total: int, desc: str, unit: str = "file"):
 _cache_lock = threading.Lock()
 
 def _cache_key(path: Path) -> str:
-    """Stable cache key: path + mtime + size."""
-    stat = path.stat()
-    raw  = f"{path}|{stat.st_mtime}|{stat.st_size}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    """Cache key is the full path string (primary key in metadata_cache table)."""
+    return str(path)
 
 
-def load_cache(cache_file: str) -> dict:
-    p = Path(cache_file)
-    if p.exists():
+def load_cache(conn) -> dict:
+    """
+    Load metadata_cache from SQLite into an in-memory dict.
+    Keyed by path_str; nested 'metadata' sub-dict preserved for
+    compatibility with all existing comparison logic.
+    """
+    cache = {}
+    for row in conn.execute("SELECT * FROM metadata_cache"):
+        r = dict(row)
+        ps = r["path_str"]
+        cache[ps] = {
+            "path_str": ps,
+            "mtime":    r["mtime"],
+            "size":     r["size"],
+            "filename": r["filename"],
+            "metadata": {
+                "title":       r["title"],
+                "artist":      r["artist"],
+                "album":       r["album"],
+                "bitrate":     r["bitrate"],
+                "duration":    r["duration"],
+                "acoustid_id": r.get("acoustid_id"),
+            },
+        }
+    return cache
+
+
+def save_cache(conn, cache: dict) -> None:
+    """
+    Write the in-memory cache dict back to metadata_cache, flattening the
+    nested 'metadata' sub-dict into individual columns.
+    """
+    rows = []
+    for ps, entry in cache.items():
+        meta = entry.get("metadata", {})
+        rows.append({
+            "path_str":    ps,
+            "mtime":       entry.get("mtime", 0.0),
+            "size":        entry.get("size", 0),
+            "filename":    entry.get("filename", ""),
+            "file_format": Path(ps).suffix.lower().lstrip("."),
+            "title":       meta.get("title"),
+            "artist":      meta.get("artist"),
+            "album_artist":None,
+            "album":       meta.get("album"),
+            "year":        None,
+            "track_number":None,
+            "disc_number": None,
+            "bitrate":     meta.get("bitrate"),
+            "sample_rate": None,
+            "bit_depth":   None,
+            "duration":    meta.get("duration"),
+            "mb_track_id": None,
+            "mb_album_id": None,
+            "acoustid_id": meta.get("acoustid_id"),
+        })
+    if rows:
+        upsert_metadata_rows(conn, rows)
+
+
+def load_fp_cache(conn) -> dict:
+    """Load fp_cache table into a simple {path_str: fingerprint} dict."""
+    return {
+        row["path_str"]: row["fingerprint"]
+        for row in conn.execute("SELECT path_str, fingerprint FROM fp_cache")
+    }
+
+
+def save_fp_cache(conn, fp_cache: dict) -> None:
+    """Write updated fingerprint entries back to fp_cache."""
+    rows = []
+    for ps, fp in fp_cache.items():
         try:
-            with open(p, encoding="utf-8") as f:
-                return json.load(f)
+            mtime = Path(ps).stat().st_mtime
         except Exception:
-            pass
-    return {}
-
-
-def save_cache(cache: dict, cache_file: str):
-    try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(cache, f, indent=2)
-    except Exception as e:
-        print(f"WARNING: Could not save cache: {e}")
+            mtime = 0.0
+        rows.append((ps, mtime, fp or "", None))
+    if rows:
+        conn.executemany(
+            "INSERT OR REPLACE INTO fp_cache "
+            "(path_str, mtime, fingerprint, fp_duration) VALUES (?,?,?,?)",
+            rows,
+        )
+        conn.commit()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -260,7 +266,7 @@ def clear_resume(resume_file: str):
 def get_file_info(path: Path) -> dict:
     """Read all metadata from a file in a single mutagen call."""
     size = path.stat().st_size
-    meta = {"title": "", "artist": "", "album": "", "bitrate": None, "duration": None}
+    meta = {"title": "", "artist": "", "album": "", "bitrate": None, "duration": None, "acoustid_id": None}
 
     try:
         audio = MutagenFile(path)
@@ -273,6 +279,12 @@ def get_file_info(path: Path) -> dict:
                 meta["title"]  = first("title")
                 meta["artist"] = first("artist")
                 meta["album"]  = first("album")
+                # AcoustID identifier — present when a file has been tagged by MusicBrainz
+                # Picard or a compatible tagger. Used as a zero-cost short-circuit to
+                # confirm same-recording matches without running fpcalc.
+                aid = easy.get("acoustid_id")
+                if aid:
+                    meta["acoustid_id"] = str(aid[0]).strip().lower()
             if hasattr(audio, "info"):
                 info = audio.info
                 if hasattr(info, "bitrate"):
@@ -291,18 +303,30 @@ def get_file_info(path: Path) -> dict:
 
 
 def get_file_info_cached(path: Path, cache: dict) -> dict:
-    """Return cached file info if valid, otherwise scan and update cache."""
-    key = _cache_key(path)
+    """
+    Return cached file info if still valid, otherwise rescan and update cache.
+    Validity is checked by comparing stored mtime and size against the current
+    file — if either changed the entry is considered stale and rescanned.
+    """
+    key = str(path)
+    try:
+        stat = path.stat()
+    except Exception:
+        return get_file_info(path)
+
     with _cache_lock:
         if key in cache:
             entry = cache[key]
-            entry["path"] = path
-            return entry
+            if (abs(entry.get("mtime", 0) - stat.st_mtime) < 0.01
+                    and entry.get("size") == stat.st_size):
+                entry["path"] = path
+                return entry
 
     info = get_file_info(path)
 
     serialisable = {k: v for k, v in info.items() if k != "path"}
-    serialisable["path_str"] = str(path)
+    serialisable["path_str"] = key
+    serialisable["mtime"]    = stat.st_mtime
 
     with _cache_lock:
         cache[key] = serialisable
@@ -820,19 +844,30 @@ def check_fpcalc(fpcalc_path: str) -> bool:
         return False
 
 
-def get_fingerprint(path: Path, fpcalc_path: str) -> str | None:
-    """Generate a raw Chromaprint fingerprint string for an audio file."""
+def get_fingerprint(path: Path, fpcalc_path: str) -> tuple:
+    """
+    Run fpcalc and return (fingerprint_string, duration_seconds).
+    Returns (None, None) on failure.
+    """
     try:
         result = subprocess.run(
             [fpcalc_path, "-raw", str(path)],
             capture_output=True, text=True, timeout=60,
         )
+        fp = None
+        duration = None
         for line in result.stdout.splitlines():
             if line.startswith("FINGERPRINT="):
-                return line.split("=", 1)[1].strip()
+                fp = line.split("=", 1)[1].strip()
+            elif line.startswith("DURATION="):
+                try:
+                    duration = float(line.split("=", 1)[1].strip())
+                except ValueError:
+                    pass
+        return fp, duration
     except Exception:
         pass
-    return None
+    return None, None
 
 
 def fingerprint_similarity(fp1: str, fp2: str) -> float:
@@ -868,12 +903,20 @@ def is_valid_fingerprint(fp: str) -> bool:
         return False
 
 
+FP_SHORT_FILE_SECONDS = 30  # files shorter than this are legitimately too brief to fingerprint
+
+
 def build_fp_index(organized_files: list, fpcalc_path: str, fp_cache: dict) -> tuple[list, list]:
     """
     Generate (or load from cache) fingerprints for all organized files.
     Returns (index, warnings) where:
       index    = list of {file, fingerprint} dicts for valid files
-      warnings = list of (path_str, reason) for skipped files
+      warnings = list of (path_str, reason) for skipped files — genuine errors only
+
+    Short files (under FP_SHORT_FILE_SECONDS) that produce a degenerate fingerprint
+    are silently skipped — they are legitimately too brief for Chromaprint (sound
+    effects, jingles, interludes). Only normal-length files with bad fingerprints,
+    or files where fingerprinting fails entirely, generate a warning.
     """
     index    = []
     warnings = []
@@ -881,18 +924,26 @@ def build_fp_index(organized_files: list, fpcalc_path: str, fp_cache: dict) -> t
 
     for f in organized_files:
         path_str = str(f["path"])
-        fp = fp_cache.get(path_str) or get_fingerprint(f["path"], fpcalc_path)
+        duration = f["metadata"].get("duration") or 0
+
+        fp = fp_cache.get(path_str)
+        if not fp:
+            fp, _dur = get_fingerprint(f["path"], fpcalc_path)
 
         if fp:
             if is_valid_fingerprint(fp):
                 fp_cache[path_str] = fp
                 index.append({"file": f, "fingerprint": fp})
             else:
-                # Store in cache so we don't re-generate, but flag as degenerate
                 fp_cache[path_str] = fp
-                warnings.append((path_str, f"short fingerprint ({len(fp.split(','))} integers) — file may be corrupted or silent"))
+                # Short files with short fingerprints are expected — silence them.
+                # Only warn if the file is long enough that a bad fingerprint is surprising.
+                if duration >= FP_SHORT_FILE_SECONDS:
+                    warnings.append((path_str, f"short fingerprint ({len(fp.split(','))} integers) — file may be corrupted or silent"))
         else:
-            warnings.append((path_str, "fingerprint generation failed"))
+            # Fingerprint generation completely failed — always a real error.
+            if duration >= FP_SHORT_FILE_SECONDS:
+                warnings.append((path_str, "fingerprint generation failed"))
 
         pbar.update(1)
 
@@ -905,8 +956,60 @@ def build_fp_index(organized_files: list, fpcalc_path: str, fp_cache: dict) -> t
 FP_HIGH_FREQ_THRESHOLD = 5
 
 
+def acoustid_id_pass(no_match_items: list, organized_files: list) -> tuple[list, list, list]:
+    """
+    Zero-cost pre-pass before fingerprinting.
+
+    If both the unsorted file and a library file share the same embedded
+    acoustid_id tag, they are the same recording — no fpcalc needed.
+    This catches same-song-different-release cases (e.g. boxset vs original
+    single) where the duration difference is too large for the metadata filter
+    to catch and the fingerprint score may fall below the threshold.
+
+    Returns (new_duplicates, new_better, remaining_no_match).
+    """
+    # Build index: acoustid_id -> organized file (first file wins per ID)
+    aid_index: dict[str, dict] = {}
+    for f in organized_files:
+        aid = f["metadata"].get("acoustid_id")
+        if aid:
+            aid_index.setdefault(aid, f)
+
+    if not aid_index:
+        return [], [], no_match_items
+
+    new_duplicates: list = []
+    new_better:     list = []
+    remaining:      list = []
+
+    for item in no_match_items:
+        u     = item["unsorted"]
+        u_aid = u["metadata"].get("acoustid_id")
+
+        if u_aid and u_aid in aid_index:
+            best_match = aid_index[u_aid]
+            match_item = {
+                "unsorted":      u,
+                "match":         best_match,
+                "match_method":  "acoustid_id tag match (verified same recording)",
+                "fp_score":      100.0,
+                "why_not_exact": "matched by AcoustID tag only (different filename/tags/duration)",
+            }
+            u_br = u["metadata"].get("bitrate") or 0
+            o_br = best_match["metadata"].get("bitrate") or 0
+            if u_br > o_br:
+                new_better.append(match_item)
+            else:
+                new_duplicates.append(match_item)
+        else:
+            remaining.append(item)
+
+    return new_duplicates, new_better, remaining
+
+
 def fingerprint_pass(no_match_items: list, org_fp_index: list, fpcalc_path: str,
-                     fp_cache: dict, threshold: float) -> tuple[list, list, list, list]:
+                     fp_cache: dict, threshold: float,
+                     near_miss_low: float = 0.0) -> tuple[list, list, list, list, list]:
     """
     Run fingerprint matching on files that had no filename/metadata match.
 
@@ -915,14 +1018,17 @@ def fingerprint_pass(no_match_items: list, org_fp_index: list, fpcalc_path: str,
       2. Skip if fingerprint is degenerate (too short)
       3. Compare against all organized library fingerprints
       4. If best similarity >= threshold, categorise as duplicate or better
+      5. If best similarity is in [near_miss_low, threshold), record as near-miss
 
-    Returns (new_duplicates, new_better, still_no_match, high_freq_warnings).
+    Returns (new_duplicates, new_better, still_no_match, high_freq_warnings, near_misses).
+    near_misses = list of dicts describing files that scored close but below threshold.
     high_freq_warnings = list of (organized_path, match_count) for library files
     that matched an unusually high number of unsorted files (possible bad fingerprint).
     """
     new_duplicates = []
     new_better     = []
     still_no_match = []
+    near_misses    = []
 
     # Track how many times each organized file is matched
     match_counts: dict[str, int] = {}
@@ -933,7 +1039,9 @@ def fingerprint_pass(no_match_items: list, org_fp_index: list, fpcalc_path: str,
         u        = item["unsorted"]
         path_str = str(u["path"])
 
-        fp_u = fp_cache.get(path_str) or get_fingerprint(u["path"], fpcalc_path)
+        fp_u = fp_cache.get(path_str)
+        if not fp_u:
+            fp_u, _dur = get_fingerprint(u["path"], fpcalc_path)
         if fp_u:
             if not is_valid_fingerprint(fp_u):
                 still_no_match.append(item)
@@ -941,8 +1049,9 @@ def fingerprint_pass(no_match_items: list, org_fp_index: list, fpcalc_path: str,
                 continue
             fp_cache[path_str] = fp_u
 
-        best_match = None
-        best_score = 0.0
+        best_match      = None
+        best_score      = 0.0
+        best_near_entry = None  # library entry with the highest sub-threshold score
 
         if fp_u:
             for entry in org_fp_index:
@@ -951,6 +1060,8 @@ def fingerprint_pass(no_match_items: list, org_fp_index: list, fpcalc_path: str,
                     best_score = score
                     if score >= threshold:
                         best_match = entry["file"]
+                    else:
+                        best_near_entry = entry["file"]
 
         if best_match:
             org_path_str = str(best_match["path"])
@@ -972,6 +1083,15 @@ def fingerprint_pass(no_match_items: list, org_fp_index: list, fpcalc_path: str,
                 new_duplicates.append(match_item)
         else:
             still_no_match.append(item)
+            # Record as near-miss if score crossed the low threshold
+            if near_miss_low > 0 and best_score >= near_miss_low and best_near_entry:
+                near_misses.append({
+                    "unsorted":   u,
+                    "near_match": best_near_entry,
+                    "score":      best_score,
+                    "threshold":  threshold,
+                    "gap":        round(threshold - best_score, 1),
+                })
 
         pbar.update(1)
 
@@ -983,7 +1103,7 @@ def fingerprint_pass(no_match_items: list, org_fp_index: list, fpcalc_path: str,
         if count >= FP_HIGH_FREQ_THRESHOLD
     ]
 
-    return new_duplicates, new_better, still_no_match, high_freq_warnings
+    return new_duplicates, new_better, still_no_match, high_freq_warnings, near_misses
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1057,6 +1177,56 @@ def write_fp_warnings_csv(csv_path: str, warnings: list, organized_root: Path):
         })
     # Sort by reason then folder
     rows.sort(key=lambda r: (r["Reason"], r["Folder"], r["Filename"]))
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_near_miss_csv(csv_path: str, near_misses: list):
+    """
+    Write a CSV of fingerprint near-misses — files that scored between
+    NEAR_MISS_LOW_THRESHOLD and FP_SIMILARITY_THRESHOLD.
+
+    Each row shows the unsorted file, the closest library file found,
+    the score, the threshold, and how many points short it fell.
+    Use this to diagnose why specific files were not matched.
+    """
+    fieldnames = [
+        "Score (%)", "Threshold (%)", "Gap to threshold (%)",
+        "Unsorted Path", "Unsorted Artist", "Unsorted Title", "Unsorted Album",
+        "Unsorted Duration", "Unsorted Bitrate",
+        "Near Match Path", "Near Match Artist", "Near Match Title", "Near Match Album",
+        "Near Match Duration", "Near Match Bitrate",
+    ]
+
+    rows = []
+    for nm in near_misses:
+        u      = nm["unsorted"]
+        match  = nm["near_match"]
+        u_meta = u["metadata"]
+        m_meta = match["metadata"]
+        rows.append({
+            "Score (%)":              f"{nm['score']:.1f}",
+            "Threshold (%)":          f"{nm['threshold']:.0f}",
+            "Gap to threshold (%)":   f"{nm['gap']:.1f}",
+            "Unsorted Path":          str(u["path"]),
+            "Unsorted Artist":        u_meta.get("artist", ""),
+            "Unsorted Title":         u_meta.get("title", ""),
+            "Unsorted Album":         u_meta.get("album", ""),
+            "Unsorted Duration":      format_duration(u_meta.get("duration")),
+            "Unsorted Bitrate":       format_bitrate(u_meta.get("bitrate")),
+            "Near Match Path":        str(match["path"]),
+            "Near Match Artist":      m_meta.get("artist", ""),
+            "Near Match Title":       m_meta.get("title", ""),
+            "Near Match Album":       m_meta.get("album", ""),
+            "Near Match Duration":    format_duration(m_meta.get("duration")),
+            "Near Match Bitrate":     format_bitrate(m_meta.get("bitrate")),
+        })
+
+    # Sort by score descending (closest misses first)
+    rows.sort(key=lambda r: -float(r["Score (%)"]))
+
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -1202,28 +1372,363 @@ def prompt_fingerprint_matching() -> bool:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  GUI-CALLABLE CORE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_find_music_duplicates(
+    unsorted_folder,
+    organized_folder=None,
+    duplicates_folder=None,
+    better_quality_folder=None,
+    dry_run=True,
+    no_review=True,
+    near_miss=False,
+    clear_cache=False,
+    clear_fp_cache=False,
+    use_fingerprints=False,
+    match_mode=None,
+    config_file=None,
+    log_folder=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    GUI-callable entry point for the music duplicate finder.
+
+    Parameters
+    ----------
+    unsorted_folder : str | Path
+        The folder of new/unsorted files to compare against the library.
+    organized_folder : str | Path | None
+        The organized library folder. Taken from config if None.
+    duplicates_folder : str | Path | None
+        Destination for duplicates. Taken from config if None.
+    better_quality_folder : str | Path | None
+        Destination for higher-quality matches. Taken from config if None.
+    dry_run : bool
+        If True, scan only — no files are moved (default: True).
+    no_review : bool
+        If True, skip all interactive prompts and Notepad review (default: True).
+        All matches are marked as pending; the GUI handles selection separately.
+    near_miss : bool
+        If True, write a near-miss CSV for scores in the 50\u201384% zone.
+    clear_cache : bool
+        Clear the metadata cache before scanning.
+    clear_fp_cache : bool
+        Clear the fingerprint cache before the FP pass.
+    use_fingerprints : bool
+        Run the AcoustID fingerprint pass on no-match files.
+    match_mode : str | None
+        Match mode ("1"\u2013"4"). Taken from config default if None.
+    config_file : str | None
+        Path to the JSON config file.
+    log_folder : str | Path | None
+        Override the reports/log folder.
+    progress_callback : callable | None
+        Called as progress_callback(current, total, filename).
+    log_callback : callable | None
+        Called as log_callback(message) for each log line.
+
+    Returns
+    -------
+    dict: cats (categorisation dict), counts (dict), report_path (str | None),
+          log_path (str | None), reports_dir (str).
+
+    Raises
+    ------
+    ValueError
+        If unsorted_folder or organized_folder do not exist, or config is invalid.
+    """
+    DEFAULT_CONFIG_FILE = str(Path(__file__).parent.parent / "music_config.json")
+    cfg_path = config_file or DEFAULT_CONFIG_FILE
+    try:
+        CFG = load_config(cfg_path)
+        _validate_config(CFG)
+    except ValueError as exc:
+        raise ValueError(str(exc))
+
+    _folders    = CFG.get("folders", {})
+    _match_cfg  = CFG.get("matching", {})
+    _perf_cfg   = CFG.get("performance", {})
+    _resume_cfg = CFG.get("resume", {})
+    _out_cfg    = CFG.get("output", {})
+    _acoustid   = CFG.get("acoustid", {})
+
+    org_folder  = Path(organized_folder or _folders.get("organized", ""))
+    dup_folder  = Path(duplicates_folder or _folders.get("duplicates", ""))
+    bq_folder   = Path(better_quality_folder or _folders.get("better_quality", ""))
+    src_folder  = Path(unsorted_folder)
+
+    if not src_folder.exists():
+        raise ValueError(f"Unsorted folder not found: {src_folder}")
+    if not org_folder.exists():
+        raise ValueError(f"Organized folder not found: {org_folder}")
+
+    _log_str    = _out_cfg.get("log_folder", "")
+    _log_folder = Path(log_folder) if log_folder else (Path(_log_str) if _log_str else Path(__file__).parent / "reports")
+
+    FUZZY_ENABLED           = bool(_match_cfg.get("fuzzy_enabled", True))
+    FUZZY_THRESHOLD         = float(_match_cfg.get("fuzzy_threshold", 88))
+    USE_DURATION            = bool(_match_cfg.get("use_duration", True))
+    DURATION_TOLERANCE      = float(_match_cfg.get("duration_tolerance_seconds", 5))
+    EXACT_SIZE_TOLERANCE    = float(_match_cfg.get("exact_match_size_tolerance_percent", 3.0)) / 100.0
+    _max_t                  = int(_perf_cfg.get("max_threads", 0))
+    MAX_THREADS             = _max_t if _max_t > 0 else (os.cpu_count() or 4)
+    CACHE_ENABLED           = bool(_perf_cfg.get("cache_enabled", True))
+    RESUME_ENABLED          = bool(_resume_cfg.get("enabled", True))
+    RESUME_FILE             = _resume_cfg.get("resume_file", "music_resume.json")
+    FPCALC_PATH             = _acoustid.get("fpcalc_path", "fpcalc")
+    FP_SIMILARITY_THRESHOLD = float(_acoustid.get("similarity_threshold", 85))
+    NEAR_MISS_LOW_THRESHOLD = 50.0
+    DEFAULT_MODE            = str(_match_cfg.get("mode", "4"))
+    mode                    = match_mode or DEFAULT_MODE
+    mode_label_str          = MODE_DESCRIPTIONS.get(mode, f"Mode {mode}")
+    timestamp               = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_label               = "DRY RUN" if dry_run else "LIVE RUN"
+    _run_slug               = "dry" if dry_run else "live"
+    _fp_slug                = "_fp" if use_fingerprints else ""
+    _file_suffix            = f"{_run_slug}_mode{mode}{_fp_slug}"
+
+    db_conn   = open_db()
+    init_db(db_conn)
+    org_cache = {}
+
+    if CACHE_ENABLED:
+        if not clear_cache:
+            org_cache = load_cache(db_conn)
+        else:
+            db_conn.execute("DELETE FROM metadata_cache")
+            db_conn.commit()
+
+    organized_files = scan_folder_threaded(org_folder, "Scanning organized", cache=org_cache if CACHE_ENABLED else None)
+    if CACHE_ENABLED:
+        save_cache(db_conn, org_cache)
+
+    unsorted_files = scan_folder_threaded(src_folder, "Scanning unsorted")
+
+    organized_index: dict[str, list[dict]] = {}
+    for f in organized_files:
+        organized_index.setdefault(f["filename"], []).append(f)
+
+    cats = categorise(unsorted_files, organized_index, mode, set())
+
+    fp_log_info            = ""
+    _fp_index_warnings: list = []
+    _fp_high_freq_warnings: list = []
+    _fp_near_misses: list  = []
+
+    if use_fingerprints and cats["no_match"]:
+        if clear_fp_cache:
+            db_conn.execute("DELETE FROM fp_cache")
+            db_conn.commit()
+            fp_cache = {}
+        else:
+            fp_cache = load_fp_cache(db_conn)
+
+        org_fp_index, fp_index_warnings = build_fp_index(organized_files, FPCALC_PATH, fp_cache)
+        _fp_index_warnings = fp_index_warnings
+
+        aid_dups, aid_better, remaining_no_match = acoustid_id_pass(cats["no_match"], organized_files)
+        fp_dups, fp_better, fp_no_match, fp_high_freq, fp_near_misses = fingerprint_pass(
+            remaining_no_match, org_fp_index, FPCALC_PATH, fp_cache, FP_SIMILARITY_THRESHOLD,
+            near_miss_low=NEAR_MISS_LOW_THRESHOLD if near_miss else 0.0,
+        )
+
+        fp_dups   = aid_dups   + fp_dups
+        fp_better = aid_better + fp_better
+        save_fp_cache(db_conn, fp_cache)
+        _fp_high_freq_warnings = fp_high_freq
+        _fp_near_misses        = fp_near_misses
+
+        cats["duplicate"].extend(fp_dups)
+        cats["better"].extend(fp_better)
+        cats["no_match"] = fp_no_match
+
+    # In no_review mode: auto-select all matches for move (GUI handles selection externally)
+    dup_selected    = set(range(len(cats["duplicate"]))) if no_review else set()
+    better_selected = set(range(len(cats["better"])))   if no_review else set()
+
+    _log_folder.mkdir(parents=True, exist_ok=True)
+    if not dry_run and dup_selected:
+        dup_folder.mkdir(parents=True, exist_ok=True)
+    if not dry_run and better_selected:
+        bq_folder.mkdir(parents=True, exist_ok=True)
+
+    log_path = str(_log_folder / f"music_log_{timestamp}_{_file_suffix}.txt")
+    csv_path = str(_log_folder / f"music_report_{timestamp}_{_file_suffix}.csv")
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(message)s",
+        handlers=[logging.FileHandler(log_path, encoding="utf-8"), logging.StreamHandler()],
+    )
+    log = logging.getLogger()
+
+    auto_csv_rows: list  = []
+    auto_log_lines: list = []
+
+    for item in cats["exact"]:
+        u = item["unsorted"]
+        if dry_run:
+            try:
+                rel = u["path"].relative_to(src_folder)
+            except ValueError:
+                rel = u["path"].name
+            dest_path = str(dup_folder / rel)
+            auto_log_lines.append(f"  [EXACT - WOULD AUTO-MOVE] {u['path']}")
+            action = "Would auto-move to Duplicates"
+        else:
+            dest      = move_file(u["path"], dup_folder, src_folder)
+            dest_path = str(dest)
+            auto_log_lines.append(f"  [EXACT - AUTO-MOVED] {u['path']}")
+            action = "Auto-moved to Duplicates"
+        auto_csv_rows.append({
+            "category": "Exact Match", "action": action,
+            "unsorted": u, "match": item["match"],
+            "dest_path": dest_path, "why_not_exact": "", "match_method": "filename/metadata",
+        })
+
+    moved_dups, dup_csv_rows = 0, []
+    if dup_selected:
+        moved_dups, dup_csv_rows = process_batch(
+            cats["duplicate"], dup_selected, dup_folder, src_folder, log, "DUPLICATE", dry_run, None
+        )
+
+    moved_better, better_csv_rows = 0, []
+    if better_selected:
+        moved_better, better_csv_rows = process_batch(
+            cats["better"], better_selected, bq_folder, src_folder, log, "BETTER QUALITY", dry_run, None
+        )
+
+    no_match_csv_rows = [
+        {"category": "No Match", "action": "Kept", "unsorted": item["unsorted"],
+         "match": None, "dest_path": "", "why_not_exact": "", "match_method": ""}
+        for item in cats["no_match"]
+    ]
+
+    all_csv_rows = auto_csv_rows + dup_csv_rows + better_csv_rows + no_match_csv_rows
+    report_path  = None
+    try:
+        write_csv_report(csv_path, all_csv_rows, mode_label_str, run_label, timestamp)
+        report_path = csv_path
+    except Exception as e:
+        print(f"WARNING: Could not write CSV report: {e}")
+
+    if not dry_run:
+        clear_resume(RESUME_FILE)
+
+    db_conn.close()
+
+    counts = {
+        "exact":     len(cats["exact"]),
+        "duplicate": len(cats["duplicate"]),
+        "better":    len(cats["better"]),
+        "no_match":  len(cats["no_match"]),
+        "moved_dups":    moved_dups,
+        "moved_better":  moved_better,
+    }
+    return {
+        "cats":        cats,
+        "counts":      counts,
+        "report_path": report_path,
+        "log_path":    log_path,
+        "reports_dir": str(_log_folder),
+    }
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    DEFAULT_CONFIG_FILE = str(Path(__file__).parent.parent / "music_config.json")
+
+    interactive_options([
+        ("--dry-run", "Dry run \u2014 preview only, no files changed  (default is live mode)"),
+    ])
+
+    DRY_RUN         = "--dry-run"        in sys.argv
+    CLEAR_CACHE     = "--clear-cache"    in sys.argv
+    CLEAR_RESUME    = "--clear-resume"   in sys.argv
+    CLEAR_FP_CACHE  = "--clear-fp-cache" in sys.argv
+    NO_REVIEW       = "--no-review"      in sys.argv
+    NEAR_MISS       = "--near-miss"      in sys.argv
+
+    _cfg_flag = next((sys.argv[i + 1] for i, a in enumerate(sys.argv)
+                      if a == "--config" and i + 1 < len(sys.argv)), None)
+    CONFIG_FILE = _cfg_flag or DEFAULT_CONFIG_FILE
+
+    _confirm_flag = next((sys.argv[i + 1] for i, a in enumerate(sys.argv)
+                          if a == "--confirm" and i + 1 < len(sys.argv)), None)
+    CONFIRM_CSV = _confirm_flag
+
+    PICK_SOURCE  = "--pick-source" in sys.argv
+    _source_flag = next((sys.argv[i + 1] for i, a in enumerate(sys.argv)
+                         if a == "--source" and i + 1 < len(sys.argv)), None)
+
+    try:
+        CFG = load_config(CONFIG_FILE)
+        _validate_config(CFG)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
+
+    ORGANIZED_FOLDER      = CFG["folders"]["organized"]
+    UNSORTED_FOLDER       = CFG["folders"]["unsorted"]
+    DUPLICATES_FOLDER     = CFG["folders"]["duplicates"]
+    BETTER_QUALITY_FOLDER = CFG["folders"]["better_quality"]
+
+    _match_cfg            = CFG.get("matching", {})
+    DEFAULT_MODE          = str(_match_cfg.get("mode", "4"))
+    FUZZY_ENABLED         = bool(_match_cfg.get("fuzzy_enabled", True))
+    FUZZY_THRESHOLD       = float(_match_cfg.get("fuzzy_threshold", 88))
+    USE_DURATION          = bool(_match_cfg.get("use_duration", True))
+    DURATION_TOLERANCE    = float(_match_cfg.get("duration_tolerance_seconds", 5))
+    EXACT_SIZE_TOLERANCE  = float(_match_cfg.get("exact_match_size_tolerance_percent", 3.0)) / 100.0
+
+    _perf_cfg             = CFG.get("performance", {})
+    _max_threads          = int(_perf_cfg.get("max_threads", 0))
+    MAX_THREADS           = _max_threads if _max_threads > 0 else (os.cpu_count() or 4)
+    CACHE_ENABLED         = bool(_perf_cfg.get("cache_enabled", True))
+
+    _resume_cfg           = CFG.get("resume", {})
+    RESUME_ENABLED        = bool(_resume_cfg.get("enabled", True))
+    RESUME_FILE           = _resume_cfg.get("resume_file", "music_resume.json")
+
+    _out_cfg              = CFG.get("output", {})
+    _log_folder_str       = _out_cfg.get("log_folder", "")
+    LOG_FOLDER            = _log_folder_str if _log_folder_str else str(Path(__file__).parent / "reports")
+
+    _acoustid_cfg         = CFG.get("acoustid", {})
+    ACOUSTID_OFFER        = bool(_acoustid_cfg.get("enabled", False))
+    FPCALC_PATH           = _acoustid_cfg.get("fpcalc_path", "fpcalc")
+    FP_SIMILARITY_THRESHOLD = float(_acoustid_cfg.get("similarity_threshold", 85))
+    NEAR_MISS_LOW_THRESHOLD = 50.0
+
     organized     = Path(ORGANIZED_FOLDER)
-    unsorted      = Path(UNSORTED_FOLDER)
     duplicates    = Path(DUPLICATES_FOLDER)
     better_folder = Path(BETTER_QUALITY_FOLDER)
     log_folder    = Path(LOG_FOLDER)
 
-    for folder, label in [(organized, "Organized"), (unsorted, "Unsorted")]:
+    # ── Resolve comparison (source) folder ──────────────────────────────────
+    # Priority: --pick-source dialog > --source flag > config unsorted folder
+    if PICK_SOURCE:
+        picked = pick_folder("Select folder to compare against library")
+        if not picked:
+            print("No folder selected. Exiting.")
+            return
+        unsorted = picked
+    elif _source_flag:
+        unsorted = Path(_source_flag.strip('"'))
+    else:
+        unsorted = Path(UNSORTED_FOLDER)
+
+    for folder, label in [(organized, "Organized"), (unsorted, "Comparison")]:
         if not folder.exists():
             print(f"ERROR: {label} folder not found: {folder}")
             return
 
     # ── Handle CLI flags ──
-    if CLEAR_CACHE:
-        Path(CACHE_FILE).unlink(missing_ok=True)
-        print("Metadata cache cleared.")
-    if CLEAR_FP_CACHE:
-        Path(FP_CACHE_FILE).unlink(missing_ok=True)
-        print("Fingerprint cache cleared.")
+    # Cache clearing is handled inside the scan (via DELETE FROM table) when
+    # CLEAR_CACHE / CLEAR_FP_CACHE flags are set — nothing to do here.
     if CLEAR_RESUME:
         clear_resume(RESUME_FILE)
         print("Resume state cleared.")
@@ -1279,19 +1784,23 @@ def main():
     print(f"  Cache            : {'enabled' if CACHE_ENABLED else 'disabled'}")
     print()
 
-    # ── Load metadata cache ──
+    # ── Open database and load metadata cache ──
+    db_conn = open_db()
+    init_db(db_conn)
+
     org_cache = {}
     if CACHE_ENABLED:
         if not CLEAR_CACHE:
-            org_cache = load_cache(CACHE_FILE)
-            # Warn if cache is more than 7 days old
-            cache_path = Path(CACHE_FILE)
-            if cache_path.exists() and org_cache:
+            org_cache = load_cache(db_conn)
+            if org_cache:
                 import time as _time
-                age_days = (_time.time() - cache_path.stat().st_mtime) / 86400
+                age_days = (_time.time() - DB_PATH.stat().st_mtime) / 86400
                 if age_days >= 7:
-                    print(f"  WARNING: Metadata cache is {age_days:.0f} days old.")
+                    print(f"  WARNING: Cache is {age_days:.0f} days old.")
                     print(f"           If you have added music recently, run with --clear-cache to refresh.")
+        else:
+            db_conn.execute("DELETE FROM metadata_cache")
+            db_conn.commit()
         print(f"  Cache loaded: {len(org_cache)} entries.")
 
     # ── Scan organized folder ──
@@ -1300,7 +1809,7 @@ def main():
     print(f"  Organized: {len(organized_files)} files found.")
 
     if CACHE_ENABLED:
-        save_cache(org_cache, CACHE_FILE)
+        save_cache(db_conn, org_cache)
         print(f"  Cache saved: {len(org_cache)} entries.")
 
     # ── Scan unsorted folder (no cache — changes frequently) ──
@@ -1330,37 +1839,45 @@ def main():
     fp_log_info            = ""
     _fp_index_warnings     = []
     _fp_high_freq_warnings = []
+    _fp_near_misses        = []
     if use_fingerprints and cats["no_match"]:
         if CLEAR_FP_CACHE:
             fp_cache = {}
+            db_conn.execute("DELETE FROM fp_cache")
+            db_conn.commit()
             print(f"\n  Fingerprint cache cleared — will regenerate all fingerprints.")
         else:
-            fp_cache = load_cache(FP_CACHE_FILE)
-            # Warn if FP cache is more than 7 days old
-            fp_cache_path = Path(FP_CACHE_FILE)
-            if fp_cache_path.exists() and fp_cache:
-                import time as _time
-                fp_age_days = (_time.time() - fp_cache_path.stat().st_mtime) / 86400
-                if fp_age_days >= 7:
-                    print(f"\n  WARNING: Fingerprint cache is {fp_age_days:.0f} days old.")
-                    print(f"           If you have added music recently, run with --clear-fp-cache to refresh.")
+            fp_cache = load_fp_cache(db_conn)
             print(f"\n  Fingerprint cache loaded: {len(fp_cache)} entries.")
         print()
 
         org_fp_index, fp_index_warnings = build_fp_index(organized_files, FPCALC_PATH, fp_cache)
         print(f"  Library fingerprints ready: {len(org_fp_index)} files.")
         if fp_index_warnings:
-            print(f"  WARNING: {len(fp_index_warnings)} library file(s) skipped due to invalid fingerprints:")
+            print(f"  WARNING: {len(fp_index_warnings)} library file(s) have fingerprint errors (short/failed on normal-length files):")
             for warn_path, warn_reason in fp_index_warnings:
                 print(f"    ! {Path(warn_path).name} — {warn_reason}")
         _fp_index_warnings = fp_index_warnings   # saved for log file
         print()
 
-        fp_dups, fp_better, fp_no_match, fp_high_freq = fingerprint_pass(
-            cats["no_match"], org_fp_index, FPCALC_PATH, fp_cache, FP_SIMILARITY_THRESHOLD
+        # AcoustID tag pre-pass — free short-circuit, no fpcalc needed
+        aid_dups, aid_better, remaining_no_match = acoustid_id_pass(
+            cats["no_match"], organized_files
+        )
+        if aid_dups or aid_better:
+            n_aid = len(aid_dups) + len(aid_better)
+            print(f"  AcoustID tag pass: {n_aid} match(es) found (no fingerprinting needed).")
+
+        fp_dups, fp_better, fp_no_match, fp_high_freq, fp_near_misses = fingerprint_pass(
+            remaining_no_match, org_fp_index, FPCALC_PATH, fp_cache, FP_SIMILARITY_THRESHOLD,
+            near_miss_low=NEAR_MISS_LOW_THRESHOLD if NEAR_MISS else 0.0,
         )
 
-        save_cache(fp_cache, FP_CACHE_FILE)
+        # Merge AcoustID tag matches with fingerprint matches
+        fp_dups  = aid_dups  + fp_dups
+        fp_better = aid_better + fp_better
+
+        save_fp_cache(db_conn, fp_cache)
 
         # Warn about high-frequency matches (possible bad fingerprints)
         if fp_high_freq:
@@ -1369,6 +1886,7 @@ def main():
             for hf_path, hf_count in sorted(fp_high_freq, key=lambda x: -x[1]):
                 print(f"    ! {Path(hf_path).name} — matched {hf_count} unsorted files")
         _fp_high_freq_warnings = fp_high_freq   # saved for log file
+        _fp_near_misses        = fp_near_misses  # saved for near-miss CSV
 
         cats["duplicate"].extend(fp_dups)
         cats["better"].extend(fp_better)
@@ -1382,6 +1900,8 @@ def main():
         else:
             fp_log_info = "Fingerprint pass: no additional matches found"
         print(f"\n  {fp_log_info}")
+        if NEAR_MISS and fp_near_misses:
+            print(f"  Near-miss pass: {len(fp_near_misses)} file(s) scored {NEAR_MISS_LOW_THRESHOLD:.0f}–{FP_SIMILARITY_THRESHOLD:.0f}% (see near-miss CSV)")
 
     print(f"\n  Exact matches (auto-move)          : {len(cats['exact'])}")
     print(f"  Standard duplicates (for review)   : {len(cats['duplicate'])}")
@@ -1694,6 +2214,14 @@ def main():
             fp_warn_csv_path = str(log_folder / f"music_fp_warnings_{timestamp}_{_file_suffix}.csv")
             write_fp_warnings_csv(fp_warn_csv_path, _fp_index_warnings, organized)
             log.info(f"Fingerprint warnings saved to: {fp_warn_csv_path}")
+
+        # Near-miss report — only if --near-miss was active and there were any near-misses
+        if NEAR_MISS and _fp_near_misses:
+            nm_csv_path = str(log_folder / f"music_near_miss_{timestamp}_{_file_suffix}.csv")
+            write_near_miss_csv(nm_csv_path, _fp_near_misses)
+            log.info(f"Near-miss report ({len(_fp_near_misses)} file(s)) saved to: {nm_csv_path}")
+        elif NEAR_MISS:
+            log.info(f"Near-miss report: no scores in {NEAR_MISS_LOW_THRESHOLD:.0f}–{FP_SIMILARITY_THRESHOLD:.0f}% range found.")
     except Exception as e:
         log.info(f"\nWARNING: Could not write CSV report: {e}")
 
@@ -1703,24 +2231,12 @@ def main():
 
     # ── Summary ──
     log.info("\n" + "=" * 60)
-    log.info(f"SUMMARY  [{run_label}]")
-    log.info(f"  Match mode                        : {mode_label_str}")
-    log.info(f"  Total unsorted files scanned      : {len(unsorted_files)}")
-    log.info(f"  Exact matches (auto-moved)        : {len(cats['exact'])}")
-    log.info(f"  Standard duplicates found         : {len(cats['duplicate'])}")
-    log.info(f"  Higher quality matches found      : {len(cats['better'])}")
-    log.info(f"  No match (untouched)              : {len(cats['no_match'])}")
-    log.info(f"  ---")
-    if DRY_RUN:
-        log.info(f"  Standard duplicates would move    : {moved_dups}")
-        log.info(f"  Higher quality files would move   : {moved_better}")
-    else:
-        log.info(f"  Standard duplicates moved         : {moved_dups}")
-        log.info(f"  Higher quality files moved        : {moved_better}")
-    log.info(f"\n  Log saved to : {log_path}")
-    log.info(f"  CSV saved to : {csv_path}")
-    if _fp_index_warnings:
-        log.info(f"  FP warnings  : {len(_fp_index_warnings)} file(s) — see music_fp_warnings_{timestamp}_{_file_suffix}.csv")
+    log.info("SUMMARY  [" + run_label + "]")
+    log.info(f"  Exact matches (auto-moved) : {len(cats['exact'])}")
+    log.info(f"  Standard duplicates        : {len(cats['duplicate'])} found  ({moved_dups} moved)")
+    log.info(f"  Higher quality             : {len(cats['better'])} found  ({moved_better} moved)")
+    log.info(f"  No match                   : {len(cats['no_match'])}")
+    log.info(f"  Total files scanned        : {len(cats['exact']) + len(cats['duplicate']) + len(cats['better']) + len(cats['no_match'])}")
     log.info("=" * 60)
 
 

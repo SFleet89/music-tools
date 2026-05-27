@@ -17,7 +17,7 @@
     "_comment4": "use_duration: include track duration in matching to reduce false positives",
     "use_duration": true,
     "_comment5": "duration_tolerance_seconds: how many seconds apart two tracks can be and still match",
-    "duration_tolerance_seconds": 2
+    "duration_tolerance_seconds": 5
   },
   "performance": {
     "_comment": "max_threads: number of parallel threads for scanning. 0 = auto (CPU count)",

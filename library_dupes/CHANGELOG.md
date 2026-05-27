@@ -4,6 +4,83 @@ All notable changes to Library Duplicate Finder are documented here.
 
 ---
 
+## remove_library_dupes.py — v1.2 — 2026-05-25
+
+### Changed (PW-01 — GUI-callable function extraction)
+- Extracted `run_remove_library_dupes()` as GUI-callable core. Parameters:
+  `decisions_csv`, `mode` ("remove" | "list" | "undo"), `dry_run`, `config_file`,
+  `reports_dir`, `progress_callback`, `log_callback`. Raises `ValueError` for
+  missing CSV, invalid mode, or (undo mode) missing undo log. Returns dict:
+  `report_path` plus mode-specific keys (`moved`/`skipped`/`errors`/`undo_log_path`
+  for remove, `restored`/`skipped`/`errors` for undo, `rows`/`remove_rows`/
+  `dec_counts`/`method_counts` for list).
+- Moved all module-level flags (`DRY_RUN`, `DO_UNDO`, `DO_LIST`, `_cfg_flag`,
+  `CFG`, `_folders`, `REPORTS_DIR`, `_holding_default`, `HOLDING_FOLDER`) and
+  `interactive_options([])` inside `main()`. No module-level side effects on import.
+- `find_undo_log(decisions_csv, reports_dir)` — `reports_dir` param replaces
+  `REPORTS_DIR` global.
+- `save_undo_log(..., reports_dir, holding_folder)` — both params replace globals.
+- `cmd_list(decisions_csv, holding_folder, log_callback=None)` — now returns dict;
+  all output routed through `log_callback` (falls back to `print`).
+- `cmd_remove(decisions_csv, dry_run, holding_folder, reports_dir, progress_callback,
+  log_callback)` — `dry_run`/`holding_folder`/`reports_dir` params replace globals;
+  `progress_callback(current, total, filename)` added; returns dict.
+- `cmd_undo(decisions_csv, dry_run, reports_dir, progress_callback, log_callback)` —
+  same pattern; raises `ValueError` instead of `sys.exit(1)` when no undo log found.
+- Wrapped entry point in `def main()` called from `if __name__ == "__main__"`.
+
+---
+
+## v1.3 — 2026-05-25
+
+### Changed (PW-01 — GUI-callable function extraction)
+- Extracted `run_find_library_dupes()` as GUI-callable core. Parameters:
+  `organized_path`, `config_file`, `use_fp`, `use_filename`, `rebuild_cache`,
+  `reports_dir`, `progress_callback`, `log_callback`. Raises `ValueError` for
+  bad paths/config. Returns dict: `matches`, `fp_warnings`, `errors`,
+  `report_path`, `log_path`, `reports_dir`.
+- Moved all module-level flags (`REBUILD_CACHE`, `USE_FP`, `USE_FILENAME`,
+  `_cfg_flag`, `_path_flag`, `CONFIG_FILE`) and all config-derived constants
+  (`CFG`, `ORGANIZED`, `REPORTS_DIR`, `FP_ENABLED`, `FN_ENABLED`,
+  `FP_THRESHOLD`, `DUR_TOL`, `FUZZY_ENABLED`, `FUZZY_THRESHOLD`, `FPCALC_PATH`,
+  `FP_MIN_LEN`, `LSH_BANDS`, `LSH_BAND_SZ`, `MAX_THREADS`) inside the run
+  function. `interactive_options([])` moved inside `main()`. No module-level
+  side effects on import.
+- `load_config()` now raises `ValueError` instead of calling `sys.exit()`.
+- `is_valid_fp(fp, min_fp_length=50)` — param replaces `FP_MIN_LEN` global.
+- `scan_library(root, errors, max_threads=4)` — param replaces `MAX_THREADS`.
+- `build_fp_index(..., min_fp_length=50)` — passes through to `is_valid_fp`.
+- `find_fp_duplicates(..., lsh_bands=20, lsh_band_size=6)` — params replace
+  `LSH_BANDS`/`LSH_BAND_SZ` globals.
+- `find_filename_duplicates(..., dur_tol=2.0, fuzzy_enabled=True,
+  fuzzy_threshold=88.0)` — params replace `DUR_TOL`/`FUZZY_*` globals.
+
+---
+
+## v1.2 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
+## v1.1 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
+
+## find_library_dupes.py — v1.1 — 2026-05-22
+
+### Changed
+- Fingerprint cache migrated from standalone `library_fp_cache.json` to the shared `music_cache.db` SQLite database (`fp_cache` table), consistent with `find_music_duplicates.py` and `build_fp_cache.py`.
+- `build_fp_index()` now accepts a `sqlite3.Connection` instead of a dict. Cache hits check mtime to invalidate stale entries.
+- `--rebuild-cache` now clears the `fp_cache` table in SQLite rather than deleting a JSON file.
+- `fp_cache_file` key removed from `library_dupes_config.json` and the example config (no longer needed).
+- `library_fp_cache.json` removed from `.gitignore` (no longer generated).
+- Imports `open_db`, `init_db`, `DB_PATH` from `music_tools_common`.
+
+---
+
 ## library_dupes_viewer.html
 
 ### v1.1 — 2026-04-05

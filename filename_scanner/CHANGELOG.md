@@ -1,8 +1,30 @@
-# Changelog — scan_music_filenames.py
+# Changelog — filename_scanner
 
-All notable changes to the Music Filename Scanner are documented here.
+All notable changes to the filename scanner scripts are documented here.
 
 ---
+
+## scan_music_filenames.py v2.5 / scan_progress.py v1.1 — 2026-05-24
+
+### Changed (pre-work PW-01: GUI-callable function extraction)
+- **`scan_music_filenames.py`** — extracted `run_scan_music_filenames(folder, summary_only, show_issues, skip_list_file, progress_callback, log_callback) -> dict` as the callable core function. GUI can call this directly; CLI calls `main()` as before.
+- **`scan_music_filenames.py`** — moved module-level flag parsing (`SUMMARY_ONLY`, `SHOW_ISSUES`, `PICK_DIR`, `_path_flag`) inside `main()`. Scripts no longer parse argv on import.
+- **`scan_music_filenames.py`** — `print_report()` now takes `summary_only` and `show_issues` as explicit parameters instead of reading module-level variables.
+- **`scan_music_filenames.py`** — added `interactive_options([])` call at top of `main()`.
+- **`scan_music_filenames.py`** — `run_scan_music_filenames()` raises `ValueError` for bad folder instead of calling `sys.exit(1)`.
+- **`scan_progress.py`** — extracted `run_scan_progress(reports_folder, first_vs_last, log_callback) -> dict` as the callable core function.
+- **`scan_progress.py`** — moved module-level flag parsing (`FIRST_VS_LAST`, `_path_flag`, `_cfg_flag`) inside `main()`.
+- **`scan_progress.py`** — removed `get_reports_folder()` helper; folder is now resolved in `main()` and passed directly to `run_scan_progress()`.
+- **`scan_progress.py`** — added `interactive_options([])` call at top of `main()`.
+- **`scan_progress.py`** — `run_scan_progress()` raises `ValueError` for bad folder instead of calling `sys.exit(1)`.
+
+---
+
+## v2.1 — 2026-05-23
+
+### Added
+- Added `interactive_options()` call: script now presents a numbered menu at startup so --apply (and any other flags) can be chosen interactively without needing separate launcher files.
+- .cmd launchers updated: --pick and --recursive removed; Dry Run launcher passes no flags, Apply launcher passes only --apply.
 
 ## scan_compare_viewer.html
 
@@ -40,6 +62,30 @@ All notable changes to the Music Filename Scanner are documented here.
 
 #### Fixed
 - Font size buttons (A−/A+) now correctly resize all table text.
+
+---
+
+## scan_music_filenames.py v2.4 / fix_double_spaces.py v2.0 — 2026-05-22
+
+### Fixed
+- **`scan_music_filenames.py`** — removed hardcoded `DEFAULT_FOLDER` (`C:\Users\neo_s\Downloads\...`). Script now resolves the target folder via: `--path` flag → `--pick` folder dialog → `config_organized_folder()` from `music_tools_common` → error with usage hint.
+- **`scan_music_filenames.py`** — `SKIP_LIST_FILE` was a hardcoded absolute path; changed to `SCRIPT_DIR / "scan_skip_list.txt"` (relative to script). Gracefully returns `[]` if file is absent.
+- **`scan_music_filenames.py`** — `load_skip_list` type annotation changed from `path: str` to bare `path` to accept `Path` objects.
+- **`fix_double_spaces.py`** — removed hardcoded `DEFAULT_FOLDER`; added `--pick` flag and `config_organized_folder()` fallback (same three-step resolution as above).
+- **`fix_double_spaces.py`** — `Path.rename()` replaced with `shutil.move(str(...), str(...))` to work correctly across drives. Added `import shutil`.
+
+### Added
+- **`scan_music_filenames.py`** — `PICK_DIR = "--pick" in sys.argv` flag; opens folder dialog when passed.
+- **`fix_double_spaces.py`** — `PICK_DIR = "--pick" in sys.argv` flag; opens folder dialog when passed.
+
+---
+
+## [2.3] — 2026-05-18
+
+### Fixed
+- **`scan_music_filenames.py`** — `REPORTS_FOLDER` was a hardcoded absolute path. Changed to `SCRIPT_DIR / "reports"` so reports always save next to the script regardless of where the tools are installed.
+- **`fix_double_spaces.py`** — same hardcoded `REPORTS_FOLDER` fix; added `SCRIPT_DIR = Path(__file__).parent`.
+- **`scan_progress.py`** — removed fragile approach of reading `REPORTS_FOLDER` out of `scan_music_filenames.py` source via regex (broken now that REPORTS_FOLDER is a Path expression, not a string literal). `get_reports_folder()` now falls back directly to `SCRIPT_DIR / "reports"`. Also stripped 502 null bytes of binary padding from the end of the file.
 
 ---
 
@@ -92,28 +138,4 @@ All notable changes to the Music Filename Scanner are documented here.
 
 ### Fixed
 - **`01. Title` format false positives** — `check_no_dash_separator` was flagging `01. Dunya Salam.mp3` and similar track+dot+title filenames as missing a separator. Added explicit pattern matching for `01. Title` and `01 - Title` as acceptable formats.
-- **Bracket false positives** — `check_brackets` was flagging every file with parentheses, including standard music tags like `(Remix)`, `(feat. X)`, `(instrumental)`, and `(Radio Edit)`. Changed to only flag brackets that contain underscores, which are a reliable signal of messy formatting.
-- **Trailing dot false positives** — `check_trailing_leading_junk` was flagging `Nitrous Oxide - K.O..mp3` and `Super8 & Tab - L.A..mp3` because the abbreviation ends with a dot before the extension. Updated to only flag trailing underscores, dashes, spaces, and multi-dot ellipsis patterns.
-
----
-
-## [1.0] - 2026-03-06
-
-### Added
-- Initial script — scans organized music folder and flags filenames with:
-  - Underscores instead of spaces
-  - Dots used as word separators
-  - Missing ` - ` separator
-  - Inconsistent spacing around dashes
-  - Brackets/parentheses in filename
-  - All caps or mostly uppercase
-  - Starts with lowercase
-  - Double spaces
-  - Leading or trailing junk characters
-  - Mixed separators (underscores/dots and dashes)
-- Outputs flagged files grouped by folder to console.
-- `--path` flag to specify folder at runtime.
-- `--summary` flag for folder-list-only output.
-- `--issues` flag to show issue type breakdown.
-- CSV report saved automatically on every run.
-- `DEFAULT_FOLDER` constant for setting default scan path.
+- **Bracket false positives** — `check_brackets` was flagging every file with parentheses, includi

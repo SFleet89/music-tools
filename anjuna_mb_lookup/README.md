@@ -10,9 +10,10 @@ Nothing is changed until you run with `--apply`. Dry run by default.
 
 | Script | Purpose |
 |---|---|
+| `music_mb_common.py` | Shared library — rate-limited MB API, fuzzy scoring, folder parsing, scoring, folder mover. Required by all four lookup/tagger scripts. |
 | `anjuna_mb_lookup.py` | Anjuna-specific lookup — extracts ANJ*/ANJCD* catalogue numbers from folder names |
 | `mb_lookup.py` | General-purpose lookup — works with any collection, any folder naming convention |
-| `tiesto_lookup.py` | Tiesto collection lookup — same as mb_lookup v1.0, tuned for `Year - Artist - Title [CatNo]` format |
+| `tiesto_lookup.py` | Tiesto collection lookup — same as mb_lookup, tuned for `Year - Artist - Title [CatNo]` format |
 | `anjuna_tagger.py` | Tags files using output from `anjuna_mb_lookup.py` |
 | `mb_tagger.py` | Tags files using output from `mb_lookup.py` or any lookup CSV |
 | `anjuna_lookup_viewer.html` | Interactive viewer for all lookup CSVs — review and select correct releases |

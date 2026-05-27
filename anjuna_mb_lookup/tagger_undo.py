@@ -1,5 +1,5 @@
 """
-Tagger Undo  v1.0
+Tagger Undo  v1.2
 ==================
 Reverses folder renames made by anjuna_tagger.py or mb_tagger.py.
 
@@ -26,17 +26,11 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import load_csv
+from music_tools_common import interactive_options
+
 SCRIPT_DIR = Path(__file__).parent
-
-APPLY   = "--apply" in sys.argv
-DRY_RUN = not APPLY
-
-
-# ── CSV loading ────────────────────────────────────────────────────────────────
-
-def load_csv(csv_path):
-    with open(csv_path, encoding="utf-8-sig") as f:
-        return list(csv.DictReader(f))
 
 
 def filter_undoable(rows):
@@ -131,9 +125,89 @@ def print_summary(results, dry_run, output_path):
     print("=" * 60)
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_tagger_undo(
+    csv_path,
+    apply: bool = False,
+    reports_dir=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Undo folder renames recorded in a tagger (anjuna_tagger/mb_tagger) CSV report.
+
+    Args:
+        csv_path:          Path to tagger report CSV.
+        apply:             False = dry run; True = move folders back.
+        reports_dir:       Where to save; defaults to <script folder>/../reports.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: undone, would_undo, errors, results (list), report_path (Path)
+
+    Raises:
+        ValueError: csv_path does not exist.
+    """
+    from collections import Counter
+    log      = log_callback or print
+    csv_path = Path(csv_path)
+
+    if not csv_path.exists():
+        raise ValueError(f"CSV not found: {csv_path}")
+
+    dry_run  = not apply
+    _reports = Path(reports_dir) if reports_dir else SCRIPT_DIR.parent / "reports"
+    _reports.mkdir(parents=True, exist_ok=True)
+    ts          = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix      = "_dry" if dry_run else "_applied"
+    output_path = _reports / f"tagger_undo{suffix}_{ts}.csv"
+
+    all_rows = load_csv(str(csv_path))
+    undoable = filter_undoable(all_rows)
+
+    log(f"  Total rows in CSV        : {len(all_rows)}")
+    log(f"  Rows with folder renames : {len(undoable)}")
+    log(f"  Rows skipped (no rename) : {len(all_rows) - len(undoable)}")
+
+    if not undoable:
+        log("  Nothing to undo.")
+        return {"undone": 0, "would_undo": 0, "errors": 0, "results": [], "report_path": None}
+
+    results = []
+    total   = len(undoable)
+    for idx, row in enumerate(undoable, 1):
+        new_folder = row.get("new_folder", "")
+        if progress_callback:
+            progress_callback(idx, total, new_folder)
+        log(f"  [{idx}/{total}]  {new_folder}")
+        result = process_row(row, dry_run)
+        sym = {"undone": "\u2713", "would_undo": "~", "error": "\u2717"}.get(result["status"], "?")
+        log(f"          {sym} {result['notes']}")
+        results.append(result)
+
+    write_report(results, str(output_path))
+    counts = Counter(r["status"] for r in results)
+    return {
+        "undone":      counts.get("undone", 0),
+        "would_undo":  counts.get("would_undo", 0),
+        "errors":      counts.get("error", 0),
+        "results":     results,
+        "report_path": output_path,
+    }
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
+    interactive_options([])
+    APPLY   = "--apply" in sys.argv
+    DRY_RUN = not APPLY
+
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
 
     reports_dir = SCRIPT_DIR.parent / "reports"
@@ -173,7 +247,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  Tagger Undo  v1.0")
+    print("  Tagger Undo  v1.1")
     print("=" * 60)
     print("  CSV    : %s" % csv_path)
     print("  Mode   : %s" % ("DRY RUN — nothing will be changed" if DRY_RUN else "LIVE — folders will be renamed back"))

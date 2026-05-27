@@ -1,5 +1,5 @@
 """
-Anjuna MusicBrainz Tagger  v1.1
+Anjuna MusicBrainz Tagger  v1.3
 ================================
 Reads an exported anjuna_lookup CSV (from anjuna_lookup_viewer.html),
 fetches full release data from MusicBrainz for each matched folder,
@@ -32,6 +32,10 @@ import urllib.parse
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import SUPPORTED_EXTENSIONS, sanitise_folder_name, load_csv
+from music_tools_common import interactive_options
+
 # ── Optional mutagen ───────────────────────────────────────────────────────────
 try:
     from mutagen.flac import FLAC, Picture
@@ -49,17 +53,11 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
 MB_API_BASE          = "https://musicbrainz.org/ws/2"
 MB_COVER_API         = "https://coverartarchive.org/release"
-USER_AGENT           = "AnjunaTagger/1.1 ( music-tools )"
+USER_AGENT           = "AnjunaTagger/1.2 ( music-tools )"
 REQUEST_DELAY        = 1.1
 SCRIPT_DIR           = Path(__file__).parent
-
-# ── Flags ──────────────────────────────────────────────────────────────────────
-APPLY    = "--apply"    in sys.argv
-SKIP_ART = "--skip-art" in sys.argv
-DRY_RUN  = not APPLY
 
 # ── Rate limiting ──────────────────────────────────────────────────────────────
 _last_request = 0
@@ -165,12 +163,6 @@ def get_tracks(release):
     return tracks
 
 
-def sanitise_folder_name(name):
-    for ch in r'<>:"/\\|?*':
-        name = name.replace(ch, "")
-    return name.strip(". ")
-
-
 def build_folder_name(release, album_artist, year):
     title  = sanitise_folder_name(release.get("title", "Unknown"))
     artist = sanitise_folder_name(album_artist or "Unknown Artist")
@@ -181,7 +173,7 @@ def build_folder_name(release, album_artist, year):
 
 # ── File matching ──────────────────────────────────────────────────────────────
 
-def get_music_files(folder):
+def _get_audio_files(folder):
     folder  = Path(folder)
     _CD_RE  = re.compile(r'^(cd|disc|disk)\s*\d+$', re.IGNORECASE)
     subdirs = [d for d in folder.iterdir() if d.is_dir()]
@@ -293,14 +285,6 @@ def write_tags(path, track, release, album_artist, year, label, catno, art_bytes
 
 # ── CSV loading ────────────────────────────────────────────────────────────────
 
-def load_csv(csv_path):
-    rows = []
-    with open(csv_path, encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
-            rows.append(row)
-    return rows
-
-
 def filter_actionable(rows):
     return [
         r for r in rows
@@ -330,7 +314,7 @@ def process_folder(row, dry_run, skip_art):
         result["notes"]  = "Folder not found: %s" % folder_path
         return result
 
-    files = get_music_files(folder_path)
+    files = _get_audio_files(folder_path)
     if not files:
         result["status"] = "skipped"
         result["notes"]  = "No music files found"
@@ -437,9 +421,93 @@ def print_summary(results, dry_run, output_path):
     print("=" * 60)
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE LOGIC  ← GUI calls this directly
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_anjuna_tagger(
+    csv_path,
+    apply: bool = False,
+    skip_art: bool = False,
+    reports_dir=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Tag album folders from an anjuna_lookup CSV.
+
+    Args:
+        csv_path:          Path to lookup CSV (folder_path + mbid columns).
+        apply:             False = dry run; True = write tags and rename folders.
+        skip_art:          True = skip cover art download.
+        reports_dir:       Where to save; defaults to <script folder>/../reports.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
+
+    Returns:
+        dict: tagged, would_tag, partial, skipped, errors, results (list),
+              report_path (Path)
+
+    Raises:
+        ValueError: csv_path does not exist.
+    """
+    from collections import Counter
+    log      = log_callback or print
+    csv_path = Path(csv_path)
+
+    if not csv_path.exists():
+        raise ValueError(f"CSV not found: {csv_path}")
+
+    dry_run  = not apply
+    _reports = Path(reports_dir) if reports_dir else SCRIPT_DIR.parent / "reports"
+    _reports.mkdir(parents=True, exist_ok=True)
+    ts          = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix      = "_dry" if dry_run else "_applied"
+    output_path = _reports / f"anjuna_tagger{suffix}_{ts}.csv"
+
+    all_rows   = load_csv(str(csv_path))
+    actionable = filter_actionable(all_rows)
+    log(f"  Total rows in CSV   : {len(all_rows)}")
+    log(f"  Rows with MBID      : {len(actionable)}")
+    log(f"  Rows without MBID   : {len(all_rows) - len(actionable)} (skipped)")
+
+    results = []
+    total   = len(actionable)
+    for idx, row in enumerate(actionable, 1):
+        folder_name = row.get("folder", "")
+        if progress_callback:
+            progress_callback(idx, total, folder_name)
+        log(f"  [{idx}/{total}]  {folder_name}")
+        result = process_folder(row, dry_run, skip_art)
+        sym = {"tagged": "\u2713", "would_tag": "~", "partial": "!", "skipped": "-", "error": "\u2717"}.get(result["status"], "?")
+        if result["status"] in ("tagged", "would_tag"):
+            log(f"          {sym} {result['files_tagged']} file(s) \u2192 {result['new_folder']}")
+        else:
+            log(f"          {sym} {result['notes']}")
+        results.append(result)
+
+    write_report(results, str(output_path))
+    counts = Counter(r["status"] for r in results)
+    return {
+        "tagged":      counts.get("tagged", 0),
+        "would_tag":   counts.get("would_tag", 0),
+        "partial":     counts.get("partial", 0),
+        "skipped":     counts.get("skipped", 0),
+        "errors":      counts.get("error", 0),
+        "results":     results,
+        "report_path": output_path,
+    }
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
+    interactive_options([])
+    APPLY    = "--apply"    in sys.argv
+    SKIP_ART = "--skip-art" in sys.argv
+    DRY_RUN  = not APPLY
+
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
 
     if not args:
@@ -452,7 +520,7 @@ def main():
             chosen = filedialog.askopenfilename(
                 title="Select lookup CSV to tag from",
                 filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                initialdir=str(SCRIPT_DIR / "reports"),
+                initialdir=str(SCRIPT_DIR.parent / "reports"),
             )
             root.destroy()
             if not chosen:
@@ -471,14 +539,14 @@ def main():
         sys.exit(1)
 
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    reports_dir = SCRIPT_DIR / "reports"
+    reports_dir = SCRIPT_DIR.parent / "reports"
     reports_dir.mkdir(exist_ok=True)
     suffix      = "_dry" if DRY_RUN else "_applied"
     output_path = reports_dir / ("anjuna_tagger%s_%s.csv" % (suffix, timestamp))
 
     print()
     print("=" * 60)
-    print("  Anjuna MusicBrainz Tagger  v1.1")
+    print("  Anjuna MusicBrainz Tagger  v1.2")
     print("=" * 60)
     print("  CSV       : %s" % csv_path)
     print("  Mode      : %s" % ("DRY RUN — nothing will be changed" if DRY_RUN else "LIVE — files will be tagged"))

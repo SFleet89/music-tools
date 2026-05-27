@@ -86,7 +86,9 @@ python find_music_duplicates.py --confirm "music_report_..._dry_..._reviewed.csv
 ## Usage
 
 ```
-python find_music_duplicates.py                          # normal run
+python find_music_duplicates.py                          # normal run (uses config unsorted folder)
+python find_music_duplicates.py --pick-source            # choose comparison folder via dialog
+python find_music_duplicates.py --source "C:\My\Folder" # specify comparison folder directly
 python find_music_duplicates.py --dry-run                # preview only
 python find_music_duplicates.py --dry-run --no-review    # preview, skip Notepad
 python find_music_duplicates.py --confirm "report.csv"   # live run from selections
@@ -94,6 +96,17 @@ python find_music_duplicates.py --clear-cache            # force re-scan of libr
 python find_music_duplicates.py --clear-fp-cache         # clear fingerprint cache
 python find_music_duplicates.py --clear-resume           # discard interrupted run
 ```
+
+### Choosing a comparison folder
+
+By default the script compares whatever folder is set as `unsorted` in `music_config.json`. Use `--pick-source` to open a folder dialog instead — useful when you want to check a specific batch folder like `C:\Downloads\To Move\` without editing the config. The dialog opens before scanning starts, so you can check different folders in separate runs without touching any settings.
+
+**Launchers:**
+
+| File | What it does |
+|------|---|
+| `Run - Find Duplicates.cmd` | Uses the config `unsorted` folder |
+| `Run - Find Duplicates (Pick Source).cmd` | Opens a folder picker first |
 
 ---
 
@@ -176,11 +189,59 @@ Double-click any `.bat` file to open a terminal and run the script automatically
 
 ---
 
+## Checking for bad AcoustID tags
+
+`check_audio_tags.py` scans a folder tree and flags any audio file whose embedded
+AcoustID tags are malformed:
+
+- **`acoustid_id`** must be a valid UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
+  Literal text like `"acoustid"` or `"acousticid"` is flagged.
+- **`acoustid_fingerprint`** (if present) must be a base64-encoded string at least
+  50 characters long.
+
+Files with no AcoustID tag at all are skipped — only files that *have* a tag but
+the value is wrong are reported.
+
+In dry-run mode it reports only. In `--apply` mode it deletes the bad tag(s) from
+the file (audio data is untouched). Run MusicBrainz Picard afterward to repopulate
+correct tags.
+
+```
+python check_audio_tags.py --pick              # pick folder, dry run
+python check_audio_tags.py --pick --apply      # pick folder, delete bad tags
+python check_audio_tags.py --path "E:\Music"   # specify folder directly
+```
+
+Or double-click `Run - Check Audio Tags (Dry Run).cmd` / `Run - Check Audio Tags (Apply).cmd`.
+
+---
+
+## Investigating near-misses and false positives
+
+After a scan, use `compare_audio.py` to examine specific pairs the duplicate
+finder flagged or missed. It shows both files' metadata side by side, runs
+fpcalc on each, and gives a plain-English verdict using the same similarity
+score as the main scan.
+
+```
+python compare_audio.py --pick                                   # pick both files via dialog
+python compare_audio.py --file1 "path\a.mp3" --file2 "path\b.mp3"
+```
+
+Or double-click `Run - Compare Audio.cmd`.
+
+The score printed by compare_audio is directly comparable to scores in
+near-miss CSVs and scan reports — they all use the same algorithm.
+
+---
+
 ## Files
 
 | File | Description |
 |---|---|
-| `find_music_duplicates.py` | Main script |
+| `find_music_duplicates.py` | Main duplicate finder script |
+| `check_audio_tags.py` | Scan for files with invalid AcoustID tags (corrupt UUIDs, non-base64 fingerprints) |
+| `compare_audio.py` | Compare two files by fingerprint — diagnose near-misses and false positives |
 | `undo_duplicates.py` | Restore files from a previous run |
 | `build_fp_cache.py` | Pre-build metadata and fingerprint caches |
 | `music_config.json` | Your configuration *(not committed — see example)* |

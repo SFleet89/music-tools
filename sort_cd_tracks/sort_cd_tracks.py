@@ -1,5 +1,5 @@
 """
-Sort CD Tracks  v1.0
+Sort CD Tracks  v1.4
 =====================
 Reads the DISCNUMBER tag from music files in a folder and moves each file
 into the correct CD subfolder (CD1, CD2, CD3 etc.).
@@ -32,12 +32,21 @@ Requirements:
     pip install mutagen
 """
 
+import re
 import sys
 import csv
 import shutil
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import (
+    SUPPORTED_EXTENSIONS as SUPPORTED_EXT,
+    pick_folder,
+    get_music_files,
+    interactive_options,
+)
 
 try:
     from mutagen import File as MutagenFile
@@ -47,18 +56,13 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-REPORTS_FOLDER = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
-SUPPORTED_EXT  = {".mp3", ".flac", ".aac", ".m4a"}
-
-# ── Flags ──────────────────────────────────────────────────────────────────────
-DRY_RUN   = "--apply"     not in sys.argv
-RECURSIVE = "--recursive" in sys.argv
-_path     = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
-                  if a == "--path" and i+1 < len(sys.argv)), None)
+SCRIPT_DIR     = Path(__file__).parent
+REPORTS_FOLDER = SCRIPT_DIR / "reports"
+_CD_RE         = re.compile(r'^(cd|disc|disk)\s*\d+$', re.IGNORECASE)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  METADATA
+#  HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def read_disc_number(path: Path):
@@ -80,114 +84,124 @@ def read_disc_number(path: Path):
     return None
 
 
-def get_music_files(folder: Path):
-    return sorted(
-        f for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXT
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  FOLDER PICKER
-# ══════════════════════════════════════════════════════════════════════════════
-
-def pick_folder():
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except ImportError:
-        print("ERROR: tkinter is not available.")
-        sys.exit(1)
-    root_tk = tk.Tk()
-    root_tk.withdraw()
-    root_tk.attributes("-topmost", True)
-    folder = filedialog.askdirectory(
-        title="Select album folder to sort into CD subfolders",
-        parent=root_tk,
-    )
-    root_tk.destroy()
-    return Path(folder) if folder else None
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  REPORT
-# ══════════════════════════════════════════════════════════════════════════════
-
-def write_report(results, reports_dir, dry_run):
+def write_report(results: list, reports_dir: Path, dry_run: bool) -> Path | None:
+    """Write a timestamped CSV report. Returns the report path, or None on failure."""
     try:
         reports_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        suffix    = "dry" if dry_run else "applied"
-        out_path  = reports_dir / f"sort_cd_tracks_{suffix}_{timestamp}.csv"
+        timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix     = "dry" if dry_run else "applied"
+        out_path   = reports_dir / f"sort_cd_tracks_{suffix}_{timestamp}.csv"
         fieldnames = ["Filename", "Disc Number", "Destination Folder", "Status"]
         with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(results)
-        print(f"  Report saved: {out_path}\n")
+        return out_path
     except Exception as e:
-        print(f"  WARNING: Could not write report: {e}\n")
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MAIN
+#  CORE LOGIC  ← GUI calls this directly
 # ══════════════════════════════════════════════════════════════════════════════
 
-def main():
-    reports_dir = Path(REPORTS_FOLDER)
+def run_sort_cd_tracks(
+    folder: Path,
+    apply: bool = False,
+    recursive: bool = False,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Sort music files into CD subfolders by DISCNUMBER tag.
 
-    # ── Determine folder ───────────────────────────────────────────────────────
-    if _path:
-        root = Path(_path.strip('"'))
-    else:
-        root = pick_folder()
-        if not root:
-            print("\n  No folder selected. Exiting.\n")
-            return
+    This function contains all the real logic. The CLI main() and the GUI
+    both call this — main() after parsing flags, the GUI directly with its
+    own folder selection and confirmation.
 
-    if not root.exists() or not root.is_dir():
-        print(f"ERROR: Folder not found: {root}")
-        sys.exit(1)
+    Args:
+        folder:            Root folder to process.
+        apply:             False = dry run only; True = move files.
+        recursive:         If True, process all album subfolders under folder.
+        progress_callback: Optional callable(current, total, message) for
+                           progress bar updates. Called once per file processed.
+        log_callback:      Optional callable(message) for log output. If None,
+                           falls back to print().
 
-    mode = "DRY RUN — nothing will be moved" if DRY_RUN else "LIVE — files will be moved"
-    print(f"\n{'='*65}")
-    print(f"Sort CD Tracks  v1.0")
-    print(f"{'='*65}")
-    print(f"  Mode   : {mode}")
-    print(f"  Folder : {root}")
-    print(f"{'='*65}\n")
+    Returns:
+        dict with keys:
+            moved         (int)  — files successfully moved (0 in dry run)
+            skipped       (int)  — destinations already existed
+            errors        (int)  — move failures
+            no_tag        (int)  — files with no DISCNUMBER tag
+            skipped_albums(int)  — folders with no disc tags at all
+            results       (list) — full row dicts for the CSV report
+            report_path   (Path|None) — path to written report, or None
 
-    # ── Determine which folders to process ────────────────────────────────────
-    if RECURSIVE:
-        # Find ALL folders at any depth that have music files directly inside
-        # and are NOT already CD-style folders themselves
-        import re
-        _CD_RE = re.compile(r'^(cd|disc|disk)\s*\d+$', re.IGNORECASE)
+    Raises:
+        ValueError:   folder does not exist or is not a directory.
+    """
+    log = log_callback or print
+
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Folder not found: {folder}")
+
+    # ── Determine folders to process ───────────────────────────────────────────
+    if recursive:
         folders_to_process = sorted(
-            d for d in root.rglob("*")
+            d for d in folder.rglob("*")
             if d.is_dir()
             and not _CD_RE.match(d.name)
             and get_music_files(d)
         )
         if not folders_to_process:
-            print("  No album folders with unsorted music files found.\n")
-            return
-        print(f"  Found {len(folders_to_process)} album folder(s) to check.\n")
+            log("  No album folders with unsorted music files found.")
+            return {
+                "moved": 0, "skipped": 0, "errors": 0,
+                "no_tag": 0, "skipped_albums": 0,
+                "results": [], "report_path": None,
+            }
+        log(f"  Found {len(folders_to_process)} album folder(s) to check.")
     else:
-        folders_to_process = [root]
+        # Auto-detect: if root has no direct music files but subfolders do,
+        # switch to recursive automatically.
+        direct_music = get_music_files(folder)
+        if not direct_music:
+            subfolder_has_music = any(
+                get_music_files(d)
+                for d in folder.iterdir()
+                if d.is_dir() and not _CD_RE.match(d.name)
+            )
+            if subfolder_has_music:
+                recursive = True
+                log("  No music files found directly — scanning subfolders instead.")
+                folders_to_process = sorted(
+                    d for d in folder.rglob("*")
+                    if d.is_dir()
+                    and not _CD_RE.match(d.name)
+                    and get_music_files(d)
+                )
+            else:
+                log("  No music files found.")
+                return {
+                    "moved": 0, "skipped": 0, "errors": 0,
+                    "no_tag": 0, "skipped_albums": 0,
+                    "results": [], "report_path": None,
+                }
+        else:
+            folders_to_process = [folder]
 
-    # ── Process each folder ────────────────────────────────────────────────────
-    all_to_move = []
-    all_results = []
+    # ── Scan each folder ────────────────────────────────────────────────────────
+    all_to_move    = []
+    all_results    = []
     skipped_albums = []
+    total_files    = sum(len(get_music_files(d)) for d in folders_to_process)
+    processed      = 0
 
-    for folder in folders_to_process:
-        files = get_music_files(folder)
-        if not files:
-            continue
-
-        by_disc  = defaultdict(list)
-        no_disc  = []
+    for album_folder in folders_to_process:
+        files   = get_music_files(album_folder)
+        by_disc = defaultdict(list)
+        no_disc = []
 
         for f in files:
             disc = read_disc_number(f)
@@ -195,112 +209,83 @@ def main():
                 by_disc[disc].append(f)
             else:
                 no_disc.append(f)
+            processed += 1
+            if progress_callback:
+                progress_callback(processed, total_files, f.name)
 
         if not by_disc:
-            if RECURSIVE:
-                skipped_albums.append((folder.name, "no disc tags"))
-            else:
-                print("  No DISCNUMBER tags found in any files.")
-                print("  Tag the files with disc numbers in Picard or MP3Tag first.\n")
+            skipped_albums.append((album_folder.name, "no disc tags"))
+            for f in no_disc:
+                all_results.append({
+                    "Filename": f.name, "Disc Number": "",
+                    "Destination Folder": "", "Status": "no disc tag — left in place",
+                })
             continue
 
-        if len(by_disc) < 2:
-            disc_num = list(by_disc.keys())[0]
-            if RECURSIVE:
-                skipped_albums.append((folder.name, f"single disc only (disc {disc_num})"))
-            else:
-                print(f"  Only one disc number found (Disc {disc_num}). Nothing to sort.\n")
-            continue
-
-        # Build move plan for this folder
         for disc in sorted(by_disc):
-            cd_folder = folder / f"CD{disc}"
+            cd_folder = album_folder / f"CD{disc}"
             for f in by_disc[disc]:
                 dest = cd_folder / f.name
                 try:
-                    _rel_folder = str(folder.relative_to(root))
+                    rel_folder = str(album_folder.relative_to(folder))
                 except Exception:
-                    _rel_folder = folder.name
-                rel  = f"{_rel_folder}/CD{disc}" if RECURSIVE else f"CD{disc}"
+                    rel_folder = album_folder.name
+                rel = f"{rel_folder}/CD{disc}" if recursive else f"CD{disc}"
+
                 if dest.exists():
                     all_results.append({
-                        "Filename":           f.name,
-                        "Disc Number":        disc,
+                        "Filename": f.name, "Disc Number": disc,
                         "Destination Folder": rel,
-                        "Status":             "skipped — destination already exists",
+                        "Status": "skipped — destination already exists",
                     })
                     continue
+
                 all_to_move.append({
                     "file": f, "disc": disc,
                     "cd_folder": cd_folder, "dest": dest,
-                    "album": str(folder),
+                    "album": str(album_folder),
                 })
                 all_results.append({
-                    "Filename":           f.name,
-                    "Disc Number":        disc,
+                    "Filename": f.name, "Disc Number": disc,
                     "Destination Folder": rel,
-                    "Status":             "would move" if DRY_RUN else "pending",
+                    "Status": "would move" if not apply else "pending",
                 })
 
         for f in no_disc:
             all_results.append({
-                "Filename":           f.name,
-                "Disc Number":        "",
-                "Destination Folder": "",
-                "Status":             "no disc tag — left in place",
+                "Filename": f.name, "Disc Number": "",
+                "Destination Folder": "", "Status": "no disc tag — left in place",
             })
 
+    # ── Dry run: report and return ─────────────────────────────────────────────
+    if not apply:
+        log(f"  {len(all_to_move)} file(s) would be moved (dry run).")
+        if skipped_albums:
+            log(f"  {len(skipped_albums)} album(s) skipped — no disc tags.")
+        report_path = write_report(all_results, REPORTS_FOLDER, dry_run=True)
+        if report_path:
+            log(f"  Report saved: {report_path}")
+        return {
+            "moved": 0,
+            "skipped": sum(1 for r in all_results if "already exists" in r["Status"]),
+            "errors": 0,
+            "no_tag": sum(1 for r in all_results if "no disc tag" in r["Status"]),
+            "skipped_albums": len(skipped_albums),
+            "results": all_results,
+            "report_path": report_path,
+        }
+
+    # ── Apply: move files ──────────────────────────────────────────────────────
     if not all_to_move:
-        print("  Nothing to move.\n")
-        write_report(all_results, reports_dir, DRY_RUN)
-        return
+        log("  Nothing to move.")
+        report_path = write_report(all_results, REPORTS_FOLDER, dry_run=False)
+        return {
+            "moved": 0, "skipped": 0, "errors": 0,
+            "no_tag": sum(1 for r in all_results if "no disc tag" in r["Status"]),
+            "skipped_albums": len(skipped_albums),
+            "results": all_results, "report_path": report_path,
+        }
 
-    # ── Preview ────────────────────────────────────────────────────────────────
-    print(f"  {len(all_to_move)} file(s) to move" + (" (dry run):" if DRY_RUN else ":"))
-    print()
-
-    # Group preview by album folder
-    seen_albums = []
-    for entry in all_to_move:
-        if entry["album"] not in seen_albums:
-            seen_albums.append(entry["album"])
-
-    for album in seen_albums:
-        album_moves = [e for e in all_to_move if e["album"] == album]
-        if RECURSIVE:
-            try:
-                album_label = str(Path(album).relative_to(str(root))) if Path(album).is_absolute() else album
-            except Exception:
-                album_label = album
-            print(f"  [{album_label}]")
-        for disc in sorted(set(e["disc"] for e in album_moves)):
-            disc_moves = [e for e in album_moves if e["disc"] == disc]
-            indent = "    " if RECURSIVE else "  "
-            print(f"{indent}-> CD{disc}/  ({len(disc_moves)} files)")
-            for e in disc_moves:
-                print(f"{indent}     {e['file'].name}")
-        print()
-
-    if skipped_albums:
-        print(f"  Skipped albums ({len(skipped_albums)}):")
-        for name, reason in skipped_albums:
-            print(f"    {name} — {reason}")
-        print()
-
-    if DRY_RUN:
-        print("  Dry run complete. Run with --apply to move files.\n")
-        write_report(all_results, reports_dir, True)
-        return
-
-    # ── Confirm ────────────────────────────────────────────────────────────────
-    confirm = input(f"  Move {len(all_to_move)} file(s) into CD subfolders? (y/n): ").strip().lower()
-    while confirm not in ("y", "n"):
-        confirm = input("  Please enter y or n: ").strip().lower()
-    if confirm != "y":
-        print("  Aborted.\n")
-        return
-
-    # ── Apply ──────────────────────────────────────────────────────────────────
     moved  = 0
     errors = 0
 
@@ -314,21 +299,110 @@ def main():
                     break
             moved += 1
         except Exception as e:
-            print(f"  [ERROR] {entry['file'].name}: {e}")
+            log(f"  [ERROR] {entry['file'].name}: {e}")
             for r in all_results:
                 if r["Filename"] == entry["file"].name:
                     r["Status"] = f"error: {e}"
                     break
             errors += 1
 
-    print(f"\n  {'='*40}")
-    print(f"  Moved  : {moved}")
-    print(f"  Errors : {errors}")
-    if skipped_albums:
-        print(f"  Albums skipped: {len(skipped_albums)}")
-    print(f"  {'='*40}\n")
+    log(f"  Moved: {moved}  |  Errors: {errors}  |  Albums skipped: {len(skipped_albums)}")
+    report_path = write_report(all_results, REPORTS_FOLDER, dry_run=False)
+    if report_path:
+        log(f"  Report saved: {report_path}")
 
-    write_report(all_results, reports_dir, False)
+    return {
+        "moved": moved,
+        "skipped": sum(1 for r in all_results if "already exists" in r["Status"]),
+        "errors": errors,
+        "no_tag": sum(1 for r in all_results if "no disc tag" in r["Status"]),
+        "skipped_albums": len(skipped_albums),
+        "results": all_results,
+        "report_path": report_path,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLI ENTRY POINT  ← .cmd launchers call this; GUI does not
+# ══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    # ── Interactive options menu ───────────────────────────────────────────────
+    interactive_options([
+        ("--recursive", "Recursive — scan all subfolders automatically"),
+    ])
+
+    # ── Parse flags ────────────────────────────────────────────────────────────
+    dry_run   = "--apply"     not in sys.argv
+    recursive = "--recursive" in sys.argv
+    _path     = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
+                      if a == "--path" and i+1 < len(sys.argv)), None)
+
+    # ── Folder selection ───────────────────────────────────────────────────────
+    if _path:
+        folder = Path(_path.strip('"'))
+    else:
+        folder = pick_folder("Select album folder (or library root for --recursive)")
+        if not folder:
+            print("\n  No folder selected. Exiting.\n")
+            return
+
+    # ── Banner ─────────────────────────────────────────────────────────────────
+    mode = "DRY RUN — nothing will be moved" if dry_run else "LIVE — files will be moved"
+    print(f"\n{'='*65}")
+    print(f"Sort CD Tracks  v1.4")
+    print(f"{'='*65}")
+    print(f"  Mode   : {mode}")
+    print(f"  Folder : {folder}")
+    print(f"{'='*65}\n")
+
+    # ── Run core logic ─────────────────────────────────────────────────────────
+    try:
+        result = run_sort_cd_tracks(
+            folder    = folder,
+            apply     = False,          # Always scan first in CLI
+            recursive = recursive,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+
+    # ── Preview and confirm before applying ────────────────────────────────────
+    if dry_run or not result["results"]:
+        return
+
+    to_move = [r for r in result["results"] if r["Status"] == "would move"]
+    if not to_move:
+        return
+
+    # Show preview grouped by destination
+    print(f"  {len(to_move)} file(s) to move:\n")
+    seen = []
+    for r in to_move:
+        dest = r["Destination Folder"]
+        if dest not in seen:
+            seen.append(dest)
+            count = sum(1 for x in to_move if x["Destination Folder"] == dest)
+            print(f"  -> {dest}/  ({count} files)")
+
+    print()
+    confirm = input(f"  Move {len(to_move)} file(s) into CD subfolders? (y/n): ").strip().lower()
+    while confirm not in ("y", "n"):
+        confirm = input("  Please enter y or n: ").strip().lower()
+    if confirm != "y":
+        print("  Aborted.\n")
+        return
+
+    # ── Apply ──────────────────────────────────────────────────────────────────
+    try:
+        run_sort_cd_tracks(
+            folder    = folder,
+            apply     = True,
+            recursive = recursive,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

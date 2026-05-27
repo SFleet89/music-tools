@@ -1,5 +1,5 @@
 """
-Sort Albums Into Artist Folders  v1.0
+Sort Albums Into Artist Folders  v1.5
 ======================================
 Scans a folder of album subfolders, reads the Album Artist tag (falling back
 to Artist if empty) from the music files inside each album, then moves each
@@ -47,6 +47,15 @@ from pathlib import Path
 from datetime import datetime
 from collections import Counter
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import (
+    SUPPORTED_EXTENSIONS as SUPPORTED_EXT,
+    pick_folder,
+    sanitise_folder_name,
+    get_music_files,
+    interactive_options,
+)
+
 try:
     from mutagen import File as MutagenFile
 except ImportError:
@@ -55,17 +64,8 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
-SUPPORTED_EXT   = {".mp3", ".flac", ".aac", ".m4a"}
-
-# ── Flags ──────────────────────────────────────────────────────────────────────
-DRY_RUN  = "--apply" not in sys.argv
-PICK_DIR = "--pick"  in sys.argv
-
-_path = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
-              if a == "--path" and i+1 < len(sys.argv)), None)
-
+SCRIPT_DIR     = Path(__file__).parent
+REPORTS_FOLDER = SCRIPT_DIR / "reports"
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  METADATA HELPERS
@@ -93,19 +93,6 @@ def read_artist_tag(path: Path) -> str | None:
     return None
 
 
-def sanitise_folder_name(name: str) -> str:
-    """Remove characters illegal in Windows folder names."""
-    for ch in r'<>:"/\\|?*':
-        name = name.replace(ch, "")
-    return name.strip(". ")
-
-
-def get_music_files(folder: Path) -> list[Path]:
-    """Return all music files directly in this folder."""
-    return sorted(
-        f for f in folder.iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXT
-    )
 
 
 def get_all_music_files(folder: Path) -> list[Path]:
@@ -218,26 +205,6 @@ def prompt_empty(album_folder: Path) -> str | None:
 #  FOLDER PICKER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def pick_folder() -> Path | None:
-    """Open a native folder-picker dialog. Returns selected Path or None."""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except ImportError:
-        print("ERROR: tkinter is not available on this system.")
-        sys.exit(1)
-
-    root_tk = tk.Tk()
-    root_tk.withdraw()
-    root_tk.attributes("-topmost", True)
-    folder = filedialog.askdirectory(
-        title="Select folder containing album subfolders",
-        parent=root_tk,
-    )
-    root_tk.destroy()
-    return Path(folder) if folder else None
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  REPORT
 # ══════════════════════════════════════════════════════════════════════════════
@@ -267,62 +234,79 @@ def write_report(results: list[dict], reports_dir: Path, dry_run: bool):
             writer.writerows(rows)
 
         print(f"  Report saved: {out_path}\n")
+        return out_path
     except Exception as e:
         print(f"  WARNING: Could not write report: {e}\n")
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MAIN
+#  CORE LOGIC  ← GUI calls this directly
 # ══════════════════════════════════════════════════════════════════════════════
 
-def main():
-    reports_dir = Path(REPORTS_FOLDER)
+def run_sort_albums_to_artists(
+    folder: Path,
+    apply: bool = False,
+    conflict_resolver=None,
+    empty_resolver=None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Sort album subfolders into artist subfolders by reading Album Artist tags.
 
-    # ── Determine folder to scan ───────────────────────────────────────────────
-    if PICK_DIR or (not _path and not PICK_DIR):
-        # Always open picker if no path specified — more useful than a hardcoded default
-        root = pick_folder()
-        if not root:
-            print("\n  No folder selected. Exiting.\n")
-            return
-    elif _path:
-        root = Path(_path.strip('"'))
-    else:
-        root = Path(DEFAULT_FOLDER)
+    Args:
+        folder:            Root folder containing album subfolders.
+        apply:             False = dry run; True = move folders.
+        conflict_resolver: Optional callable(album_folder, files) -> str|None.
+                           Called when multiple artist tags disagree. Return the
+                           chosen artist name, or None to skip the album.
+                           Defaults to prompt_conflict() (interactive CLI prompt).
+        empty_resolver:    Optional callable(album_folder) -> str|None.
+                           Called when no artist tag is found. Return a typed
+                           artist name, or None to skip. Defaults to prompt_empty().
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
 
-    if not root.exists() or not root.is_dir():
-        print(f"ERROR: Folder not found: {root}")
-        sys.exit(1)
+    Returns:
+        dict: moved, pending, skipped, errors, results (list of dicts),
+              report_path (Path|None)
 
-    mode = "DRY RUN — nothing will be moved" if DRY_RUN else "LIVE — albums will be moved"
-    print(f"\n{'='*65}")
-    print(f"Sort Albums Into Artist Folders  v1.0")
-    print(f"{'='*65}")
-    print(f"  Mode   : {mode}")
-    print(f"  Folder : {root}")
-    print(f"{'='*65}\n")
+    Raises:
+        ValueError: folder does not exist or is not a directory.
+    """
+    log = log_callback or print
 
-    # ── Find album subfolders (direct children that contain music) ─────────────
-    print("  Scanning...\n")
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Folder not found: {folder}")
+
+    _conflict_resolver = conflict_resolver or prompt_conflict
+    _empty_resolver    = empty_resolver    or prompt_empty
+
+    # ── Find album subfolders ──────────────────────────────────────────────────
     album_folders = sorted(
-        d for d in root.iterdir()
+        d for d in folder.iterdir()
         if d.is_dir() and get_all_music_files(d)
     )
 
     if not album_folders:
-        print("  No album folders found (subfolders containing music files).\n")
-        return
+        log("  No album folders found (subfolders containing music files).")
+        return {"moved": 0, "pending": 0, "skipped": 0, "errors": 0,
+                "results": [], "report_path": None}
 
-    print(f"  Found {len(album_folders)} album folder(s).\n")
+    total = len(album_folders)
+    log(f"  Found {total} album folder(s).")
 
     # ── Detect artist for each album ───────────────────────────────────────────
     album_data = []
     conflicts  = []
     empties    = []
 
-    for folder in album_folders:
-        artist, status = get_artist_for_album(folder)
-        entry = {"folder": folder, "album": folder.name, "artist": artist, "status": status}
+    for idx, af in enumerate(album_folders, 1):
+        if progress_callback:
+            progress_callback(idx, total, af.name)
+        artist, status = get_artist_for_album(af)
+        entry = {"folder": af, "album": af.name, "artist": artist, "status": status}
         album_data.append(entry)
         if status == "conflict":
             conflicts.append(entry)
@@ -330,32 +314,27 @@ def main():
             empties.append(entry)
 
     ok_count = sum(1 for a in album_data if a["status"] == "ok")
-    print(f"  Artist tag clear : {ok_count}")
-    print(f"  Conflicts        : {len(conflicts)}")
-    print(f"  No artist tag    : {len(empties)}")
-    print()
+    log(f"  Artist tag clear : {ok_count}")
+    log(f"  Conflicts        : {len(conflicts)}")
+    log(f"  No artist tag    : {len(empties)}")
 
     # ── Resolve conflicts ──────────────────────────────────────────────────────
-    if conflicts:
-        print(f"  {len(conflicts)} conflict(s) need your input:\n")
-        for entry in conflicts:
-            all_files = get_all_music_files(entry["folder"])
-            chosen = prompt_conflict(entry["folder"], all_files)
-            entry["artist"] = chosen
-            entry["status"] = "resolved" if chosen else "skipped"
+    for entry in conflicts:
+        all_files = get_all_music_files(entry["folder"])
+        chosen    = _conflict_resolver(entry["folder"], all_files)
+        entry["artist"] = chosen
+        entry["status"] = "resolved" if chosen else "skipped"
 
     # ── Resolve empties ────────────────────────────────────────────────────────
-    if empties:
-        print(f"\n  {len(empties)} album(s) have no artist tag:\n")
-        for entry in empties:
-            chosen = prompt_empty(entry["folder"])
-            entry["artist"] = chosen
-            entry["status"] = "resolved" if chosen else "skipped"
+    for entry in empties:
+        chosen = _empty_resolver(entry["folder"])
+        entry["artist"] = chosen
+        entry["status"] = "resolved" if chosen else "skipped"
 
     # ── Build move plan ────────────────────────────────────────────────────────
-    to_move  = []
-    skipped  = []
-    results  = []
+    to_move = []
+    skipped = []
+    results = []
 
     for entry in album_data:
         artist = entry.get("artist")
@@ -367,44 +346,122 @@ def main():
             continue
 
         artist_clean  = sanitise_folder_name(artist)
-        artist_folder = root / artist_clean
+        artist_folder = folder / artist_clean
         dest          = artist_folder / entry["folder"].name
 
         entry["artist"]       = artist
         entry["artist_clean"] = artist_clean
         entry["dest"]         = str(dest)
 
-        # Skip if already in the right place
         if entry["folder"].parent == artist_folder:
             entry["status"] = "already correct"
             skipped.append(entry)
             results.append(entry)
             continue
 
-        # Collision check — dest already exists
         if dest.exists():
             entry["status"] = "skipped — destination already exists"
             skipped.append(entry)
             results.append(entry)
             continue
 
-        entry["status"] = "would move" if DRY_RUN else "pending"
+        entry["status"] = "pending"
         to_move.append(entry)
         results.append(entry)
+
+    if not apply:
+        report_path = write_report(results, SCRIPT_DIR / "reports", dry_run=True)
+        return {"moved": 0, "pending": len(to_move), "skipped": len(skipped),
+                "errors": 0, "results": results, "report_path": report_path}
+
+    # ── Apply ──────────────────────────────────────────────────────────────────
+    moved  = 0
+    errors = 0
+
+    for i, entry in enumerate(to_move):
+        if progress_callback:
+            progress_callback(i + 1, len(to_move), entry["album"])
+        src           = entry["folder"]
+        artist_folder = folder / entry["artist_clean"]
+        dest          = artist_folder / entry["folder"].name
+        try:
+            artist_folder.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+            entry["status"] = "moved"
+            entry["dest"]   = str(dest)
+            log(f"  ✓  {entry['album']} → {entry['artist_clean']}/")
+            moved += 1
+        except Exception as e:
+            log(f"  !  Error moving {entry['album']}: {e}")
+            entry["status"] = f"error: {e}"
+            errors += 1
+
+    report_path = write_report(results, SCRIPT_DIR / "reports", dry_run=False)
+
+    return {"moved": moved, "pending": 0, "skipped": len(skipped),
+            "errors": errors, "results": results, "report_path": report_path}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLI ENTRY POINT  ← .cmd launchers call this; GUI does not
+# ══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    interactive_options([])
+
+    DRY_RUN  = "--apply" not in sys.argv
+    PICK_DIR = "--pick"  in sys.argv
+
+    _path = next((sys.argv[i+1] for i, a in enumerate(sys.argv)
+                  if a == "--path" and i+1 < len(sys.argv)), None)
+
+    # ── Determine folder to scan ───────────────────────────────────────────────
+    if _path:
+        root = Path(_path.strip('"'))
+    else:
+        root = pick_folder("Select folder to sort albums into artist subfolders")
+        if not root:
+            print("\n  No folder selected. Exiting.\n")
+            return
+
+    if not root.exists() or not root.is_dir():
+        print(f"ERROR: Folder not found: {root}")
+        sys.exit(1)
+
+    mode = "DRY RUN — nothing will be moved" if DRY_RUN else "LIVE — albums will be moved"
+    print(f"\n{'='*65}")
+    print(f"Sort Albums Into Artist Folders  v1.5")
+    print(f"{'='*65}")
+    print(f"  Mode   : {mode}")
+    print(f"  Folder : {root}")
+    print(f"{'='*65}\n")
+
+    print("  Scanning...\n")
+
+    try:
+        result = run_sort_albums_to_artists(
+            folder=root,
+            apply=False,
+            conflict_resolver=prompt_conflict,
+            empty_resolver=prompt_empty,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+
+    results = result["results"]
+    to_move = [r for r in results if r["status"] == "pending"]
+    skipped = [r for r in results if r["status"] != "pending"]
 
     # ── Preview ────────────────────────────────────────────────────────────────
     if not to_move:
         print("  Nothing to move.\n")
     else:
-        print(f"\n  {len(to_move)} album(s) to move"
-              + (" (dry run):" if DRY_RUN else ":"))
+        print(f"\n  {len(to_move)} album(s) to move (dry run):")
         print()
-
-        # Group by artist for a cleaner display
         by_artist: dict[str, list] = {}
         for entry in to_move:
             by_artist.setdefault(entry["artist_clean"], []).append(entry)
-
         for artist, albums in sorted(by_artist.items()):
             print(f"  → {artist}/")
             for a in albums:
@@ -419,11 +476,13 @@ def main():
 
     if DRY_RUN:
         print("  Dry run complete. Run with --apply to move.\n")
-        write_report(results, reports_dir, dry_run=True)
+        if result["report_path"]:
+            print(f"  Report: {result['report_path']}\n")
         return
 
     if not to_move:
-        write_report(results, reports_dir, dry_run=False)
+        if result["report_path"]:
+            print(f"  Report: {result['report_path']}\n")
         return
 
     # ── Confirm ────────────────────────────────────────────────────────────────
@@ -439,10 +498,9 @@ def main():
     errors = 0
 
     for entry in to_move:
-        src          = entry["folder"]
+        src           = entry["folder"]
         artist_folder = root / entry["artist_clean"]
-        dest         = artist_folder / entry["folder"].name
-
+        dest          = artist_folder / entry["folder"].name
         try:
             artist_folder.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dest))
@@ -460,7 +518,7 @@ def main():
     print(f"  Errors : {errors}")
     print(f"  {'='*40}\n")
 
-    write_report(results, reports_dir, dry_run=False)
+    write_report(results, SCRIPT_DIR / "reports", dry_run=False)
 
 
 if __name__ == "__main__":

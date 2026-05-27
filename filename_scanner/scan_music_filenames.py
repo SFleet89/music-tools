@@ -1,5 +1,5 @@
 """
-Music Filename Scanner  v2.0
+Music Filename Scanner  v2.5
 =============================
 Scans your organized music folder and reports filenames that look messy
 or malformed — so you know exactly where to focus your renaming tool.
@@ -15,10 +15,14 @@ Outputs (all saved to the reports folder):
   ... etc.
 
 Usage:
-    python scan_music_filenames.py
+    python scan_music_filenames.py --pick                   # pick folder via dialog
     python scan_music_filenames.py --path "C:\\Music\\Organized"
     python scan_music_filenames.py --summary        # folder list only, no file detail
     python scan_music_filenames.py --issues         # add issue breakdown to console output
+
+If neither --pick nor --path is given the script reads the 'organized' folder
+from music_config.json at the project root.  If the config is also missing it
+exits with an error.
 """
 
 import sys
@@ -28,22 +32,18 @@ from pathlib import Path
 from datetime import datetime
 from collections import Counter
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from music_tools_common import pick_folder, config_organized_folder, interactive_options
+
 SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-DEFAULT_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\SD\Music"
-REPORTS_FOLDER  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports"
-SKIP_LIST_FILE  = r"C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\filename_scanner\scan_skip_list.txt"
+SCRIPT_DIR     = Path(__file__).parent
+REPORTS_FOLDER = SCRIPT_DIR / "reports"
 
-# ── Parse flags ────────────────────────────────────────────────────────────────
-SUMMARY_ONLY = "--summary" in sys.argv
-SHOW_ISSUES  = "--issues"  in sys.argv
-
-_path_flag = next(
-    (sys.argv[i + 1] for i, a in enumerate(sys.argv)
-     if a == "--path" and i + 1 < len(sys.argv)),
-    None,
-)
+# Skip list: plain text file next to the script (one pattern per line).
+# If the file doesn't exist no patterns are loaded and all files are scanned.
+SKIP_LIST_FILE = SCRIPT_DIR / "scan_skip_list.txt"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -53,7 +53,7 @@ _path_flag = next(
 #  Lines starting with # are comments. Blank lines are ignored.
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_skip_list(path: str) -> list:
+def load_skip_list(path) -> list:
     p = Path(path)
     if not p.exists():
         return []
@@ -275,7 +275,8 @@ def write_skipped_csv(skipped, csv_path):
 #  CONSOLE OUTPUT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def print_report(results, root, total_scanned, skipped_count, skip_list_loaded):
+def print_report(results, root, total_scanned, skipped_count, skip_list_loaded,
+                 summary_only=False, show_issues=False):
     total_files = sum(len(v) for v in results.values())
 
     print("=" * 70)
@@ -296,13 +297,13 @@ def print_report(results, root, total_scanned, skipped_count, skip_list_loaded):
         label = str(folder.relative_to(root)) if folder != root else "."
         print(f"\n  📁  {label}  ({len(files)} file(s))")
 
-        if not SUMMARY_ONLY:
+        if not summary_only:
             for filename, issues in sorted(files, key=lambda x: x[0]):
                 print(f"       {filename}")
                 for issue in issues:
                     print(f"         ⚠  {issue}")
 
-    if SHOW_ISSUES:
+    if show_issues:
         counter = Counter(
             issue
             for files in results.values()
@@ -317,47 +318,66 @@ def print_report(results, root, total_scanned, skipped_count, skip_list_loaded):
                 print(f"    {count:>4}x  {issue}")
 
     print("\n" + "=" * 70)
-    if SUMMARY_ONLY:
+    if summary_only:
         print("  (Run without --summary to see individual filenames and issues)")
     print()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MAIN
+#  CORE LOGIC  ← GUI calls this directly
 # ══════════════════════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
-    folder_str = _path_flag or DEFAULT_FOLDER
-    root = Path(folder_str.strip('"'))
-    reports_dir = Path(REPORTS_FOLDER)
+def run_scan_music_filenames(
+    folder: Path,
+    summary_only: bool = False,
+    show_issues: bool = False,
+    skip_list_file: Path = None,
+    progress_callback=None,
+    log_callback=None,
+) -> dict:
+    """
+    Scan folder for music files with malformed filenames.
 
-    if not root.exists():
-        print(f"ERROR: Folder not found: {root}")
-        print(f"Usage: python scan_music_filenames.py --path \"C:\\Your\\Music\\Folder\"")
-        sys.exit(1)
+    Args:
+        folder:            Root folder to scan recursively.
+        summary_only:      If True, only show folder totals (no per-file detail).
+        show_issues:       If True, include issue type breakdown in log output.
+        skip_list_file:    Path to skip list .txt file. Defaults to SKIP_LIST_FILE.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
 
-    if not root.is_dir():
-        print(f"ERROR: Path is not a folder: {root}")
-        sys.exit(1)
+    Returns:
+        dict: total_scanned, flagged, skipped, skip_patterns, results,
+              skipped_list, issue_counts, report_paths (list of Path)
 
-    skip_patterns = load_skip_list(SKIP_LIST_FILE)
+    Raises:
+        ValueError: folder does not exist or is not a directory.
+    """
+    log = log_callback or print
 
-    print(f"\nScanning : {root}")
-    if skip_patterns:
-        print(f"Skip list: {len(skip_patterns)} pattern(s) loaded")
-    print("Please wait...\n")
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Folder not found: {folder}")
 
-    all_music = [
-        f for f in root.rglob("*")
+    if skip_list_file is None:
+        skip_list_file = SKIP_LIST_FILE
+
+    skip_patterns = load_skip_list(skip_list_file)
+
+    all_music = sorted(
+        f for f in folder.rglob("*")
         if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
+    )
     total_scanned = len(all_music)
 
-    results, skipped = scan(root, skip_patterns)
-    print_report(results, root, total_scanned, len(skipped), len(skip_patterns))
+    if progress_callback:
+        progress_callback(0, total_scanned, "Scanning...")
 
-    timestamp     = datetime.now().strftime('%Y%m%d_%H%M%S')
-    all_rows      = build_all_rows(results, root)
+    results, skipped = scan(folder, skip_patterns)
+
+    if progress_callback:
+        progress_callback(total_scanned, total_scanned, "Scan complete")
+
+    all_rows      = build_all_rows(results, folder)
     total_flagged = len(all_rows)
 
     issue_counts = Counter(
@@ -367,32 +387,108 @@ if __name__ == "__main__":
         for issue in issues
     )
 
+    # ── Write reports ──────────────────────────────────────────────────────────
+    REPORTS_FOLDER.mkdir(parents=True, exist_ok=True)
+    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_paths = []
+
+    summary_path = REPORTS_FOLDER / f"scan_summary_{timestamp}.csv"
+    write_summary_csv(all_rows, str(summary_path))
+    report_paths.append(summary_path)
+    log(f"  Report: scan_summary_{timestamp}.csv  ({total_flagged} files)")
+
+    for i, issue in enumerate(ISSUE_ORDER, start=1):
+        if issue_counts.get(issue, 0) == 0:
+            continue
+        slug     = ISSUE_SLUGS[issue]
+        filename = f"scan_{i:02d}_{slug}_{timestamp}.csv"
+        count    = write_issue_csv(all_rows, issue, str(REPORTS_FOLDER / filename))
+        report_paths.append(REPORTS_FOLDER / filename)
+        log(f"  Report: {filename}  ({count} files)")
+
+    if skipped:
+        skipped_path = REPORTS_FOLDER / f"scan_skipped_{timestamp}.csv"
+        write_skipped_csv(skipped, str(skipped_path))
+        report_paths.append(skipped_path)
+        log(f"  Report: scan_skipped_{timestamp}.csv  ({len(skipped)} files)")
+
+    return {
+        "total_scanned":  total_scanned,
+        "flagged":        total_flagged,
+        "skipped":        len(skipped),
+        "skip_patterns":  len(skip_patterns),
+        "results":        results,
+        "skipped_list":   skipped,
+        "issue_counts":   issue_counts,
+        "report_paths":   report_paths,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLI ENTRY POINT  ← .cmd launchers call this; GUI does not
+# ══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    interactive_options([])
+
+    summary_only = "--summary" in sys.argv
+    show_issues  = "--issues"  in sys.argv
+    pick_dir     = "--pick"    in sys.argv
+
+    _path_flag = next(
+        (sys.argv[i + 1] for i, a in enumerate(sys.argv)
+         if a == "--path" and i + 1 < len(sys.argv)),
+        None,
+    )
+
+    # ── Resolve the folder to scan ─────────────────────────────────────────────
+    if _path_flag:
+        root = Path(_path_flag.strip('"'))
+    elif pick_dir:
+        root = pick_folder("Select your music library folder to scan")
+        if not root:
+            print("No folder selected. Exiting.")
+            sys.exit(0)
+    else:
+        root = config_organized_folder()
+        if not root:
+            print("ERROR: No folder specified.")
+            print("  Use --pick to open a folder dialog, or --path \"C:\\...\" to specify directly.")
+            print("  (Or set 'folders.organized' in music_config.json at the project root.)")
+            sys.exit(1)
+        print(f"  Using organized folder from music_config.json: {root}")
+
+    if not root.exists() or not root.is_dir():
+        print(f"ERROR: Folder not found: {root}")
+        sys.exit(1)
+
+    print(f"\nScanning : {root}")
+    skip_patterns = load_skip_list(SKIP_LIST_FILE)
+    if skip_patterns:
+        print(f"Skip list: {len(skip_patterns)} pattern(s) loaded")
+    print("Please wait...\n")
+
     try:
-        reports_dir.mkdir(parents=True, exist_ok=True)
+        result = run_scan_music_filenames(
+            root,
+            summary_only=summary_only,
+            show_issues=show_issues,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
-        # Summary report
-        summary_path = str(reports_dir / f"scan_summary_{timestamp}.csv")
-        write_summary_csv(all_rows, summary_path)
+    print_report(
+        result["results"], root,
+        result["total_scanned"], result["skipped"], result["skip_patterns"],
+        summary_only=summary_only, show_issues=show_issues,
+    )
 
-        print("  Reports saved:")
-        print(f"    scan_summary_{timestamp}.csv  ({total_flagged} files)")
+    print("  Reports saved:")
+    for p in result["report_paths"]:
+        print(f"    {p.name}")
+    print()
 
-        # Per-issue reports in priority order
-        for i, issue in enumerate(ISSUE_ORDER, start=1):
-            if issue_counts.get(issue, 0) == 0:
-                continue
-            slug     = ISSUE_SLUGS[issue]
-            filename = f"scan_{i:02d}_{slug}_{timestamp}.csv"
-            count    = write_issue_csv(all_rows, issue, str(reports_dir / filename))
-            print(f"    {filename}  ({count} files)")
 
-        # Skipped report
-        if skipped:
-            skipped_path = str(reports_dir / f"scan_skipped_{timestamp}.csv")
-            write_skipped_csv(skipped, skipped_path)
-            print(f"    scan_skipped_{timestamp}.csv  ({len(skipped)} files)")
-
-        print()
-
-    except Exception as e:
-        print(f"  WARNING: Could not write reports: {e}\n")
+if __name__ == "__main__":
+    main()
