@@ -1,5 +1,5 @@
 """
-Music Tools GUI -- Main Window  v0.2
+Music Tools GUI -- Main Window  v0.3
 =====================================
 QMainWindow with sidebar, stacked panels, log, and live theme switching.
 """
@@ -21,6 +21,7 @@ from gui.theme import (
 from gui.log_panel import LogPanel
 from gui.settings_panel import SettingsPanel
 from gui.theme_panel import AppearancePanel
+from gui.sort_cd_tracks_panel import SortCdTracksPanel
 
 
 _SIDEBAR_ITEMS = [
@@ -195,6 +196,12 @@ class MainWindow(QMainWindow):
             elif name == "Appearance":
                 self._appearance_panel = AppearancePanel()
                 self._stack.addWidget(self._appearance_panel)
+            elif name == "Sort CD Tracks":
+                panel = SortCdTracksPanel()
+                panel.log_message.connect(
+                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
+                )
+                self._stack.addWidget(panel)
             else:
                 self._stack.addWidget(_PlaceholderPanel(name, desc))
 

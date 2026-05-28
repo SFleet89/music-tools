@@ -18,6 +18,12 @@
 
 ## gui/ — PySide6 Application
 
+### v0.3 — 2026-05-27
+
+#### Added
+- `gui/sort_cd_tracks_panel.py` — first fully wired tool panel (Phase 2). Folder picker, Recursive option, Dry Run / Apply buttons, QThread worker, live progress bar, results table with colour-coded statuses, summary row, report path logged. `log_message` signal routes to the main log panel.
+- `gui/main_window.py` — wired `SortCdTracksPanel` in place of the Sort CD Tracks placeholder; import added.
+
 ### v0.2 — 2026-05-26
 
 #### Added
