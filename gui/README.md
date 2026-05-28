@@ -14,6 +14,14 @@ Or double-click **`Run - Music Tools GUI.cmd`** in the project root.
 pip install PySide6
 ```
 
+## Platform compatibility
+
+PySide6 runs on Windows, macOS, and Linux — the GUI works on all three with no code changes. The `Run - Music Tools GUI.cmd` launcher is Windows-only; on Linux/macOS use:
+
+```bash
+python gui/main.py
+```
+
 ## File structure
 
 | File | Purpose |

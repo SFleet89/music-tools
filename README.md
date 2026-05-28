@@ -260,3 +260,32 @@ Download `fpcalc` from [acoustid.org/chromaprint](https://acoustid.org/chromapri
 ## Supported Audio Formats
 
 MP3, FLAC, AAC, M4A
+
+---
+
+## Platform Notes
+
+The scripts and the GUI are written in standard Python and PySide6, both of which run on Windows, macOS, and Linux. The project was built and tested on Windows, so a few things are Windows-specific by convention rather than necessity.
+
+**The `.cmd` launcher files** are Windows-only. On Linux or macOS, just run the scripts directly:
+
+```bash
+# Any script (dry run by default)
+python sort_cd_tracks/sort_cd_tracks.py --pick
+
+# GUI
+python gui/main.py
+```
+
+**`fpcalc` path in `music_config.json`** — the example path ends in `.exe`. On Linux/macOS, download the correct binary from [acoustid.org/chromaprint](https://acoustid.org/chromaprint) and set the path without the `.exe` extension.
+
+**Folder picker dialogs in CLI scripts** use `tkinter`, which is bundled with Python on Windows and macOS but may need a separate install on some Linux distros:
+
+```bash
+# Debian / Ubuntu
+sudo apt install python3-tk
+```
+
+The GUI uses `QFileDialog` (from PySide6) for folder picking and does not require `tkinter`.
+
+**PyInstaller builds** — `pyinstaller gui/main.py` should work on any platform with PySide6 installed. No Windows-specific hooks are needed for the Phase 1 shell.

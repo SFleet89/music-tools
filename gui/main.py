@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt
 
-from gui.theme import build_stylesheet, APP_FONT_FAMILY, APP_FONT_SIZE
+from gui.theme import build_stylesheet, load_gui_config, APP_FONT_FAMILY, APP_FONT_SIZE
 from gui.main_window import MainWindow
 
 
@@ -40,8 +40,9 @@ def main() -> int:
     app.setApplicationName("Music Tools")
     app.setOrganizationName("Shrutesh")
 
-    # Apply stylesheet and base font
-    app.setStyleSheet(build_stylesheet())
+    # Load saved theme prefs and apply before the window is shown
+    cfg = load_gui_config()
+    app.setStyleSheet(build_stylesheet(cfg["mode"], cfg["accent"]))
     font = QFont(APP_FONT_FAMILY, APP_FONT_SIZE)
     app.setFont(font)
 

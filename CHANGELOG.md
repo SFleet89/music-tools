@@ -18,6 +18,21 @@
 
 ## gui/ — PySide6 Application
 
+### v0.2 — 2026-05-26
+
+#### Added
+- `theme_panel.py` — Appearance panel with dark/light mode toggle and 8 accent colour swatches; settings saved to `gui_config.json` and applied live.
+
+#### Changed
+- `main_window.py` — wired `AppearancePanel`; added all 34 tools as placeholder panels ("Coming in Phase 2") with sidebar section headers.
+- `theme.py` — added `ACCENT_PRESETS`, `_LIGHT_BASE` palette, `apply_theme()`, `load_gui_config()`, `save_gui_config()`; scrollbar styled with visible track and handle.
+- `Run - Music Tools GUI.cmd` — switched from `python ... && pause` to `pythonw`; no console window opens on launch.
+
+#### Removed
+- Window opacity control removed from Appearance panel (affected whole window, not just title bar).
+
+---
+
 ### v0.1 — 2026-05-26
 
 #### Added
