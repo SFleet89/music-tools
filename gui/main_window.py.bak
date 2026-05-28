@@ -1,5 +1,5 @@
 """
-Music Tools GUI -- Main Window  v0.5
+Music Tools GUI -- Main Window  v0.3
 =====================================
 QMainWindow with sidebar, stacked panels, log, and live theme switching.
 """
@@ -25,14 +25,6 @@ from gui.sort_cd_tracks_panel import SortCdTracksPanel
 from gui.clean_album_folders_panel import CleanAlbumFoldersPanel
 from gui.fix_featuring_panel import FixFeaturingPanel
 from gui.fix_double_spaces_panel import FixDoubleSpacesPanel
-from gui.duplicate_finder_panel import DuplicateFinderPanel
-from gui.anjuna_mb_lookup_panel import AnjunaMBLookupPanel
-from gui.mb_lookup_panel import MBLookupPanel
-from gui.tiesto_lookup_panel import TiestoLookupPanel
-from gui.anjuna_tagger_panel import AnjunaTaggerPanel
-from gui.mb_tagger_panel import MBTaggerPanel
-from gui.tagger_undo_panel import TaggerUndoPanel
-from gui.move_from_report_panel import MoveFromReportPanel
 
 
 _SIDEBAR_ITEMS = [
@@ -99,7 +91,7 @@ class _PlaceholderPanel(QWidget):
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setStyleSheet("font-size: 32pt; background: transparent;")
 
-        coming = QLabel("Coming in Phase 3")
+        coming = QLabel("Coming in Phase 2")
         coming.setObjectName("placeholder")
         coming.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -144,7 +136,6 @@ class MainWindow(QMainWindow):
         self._sidebar.setObjectName("sidebar")
         self._sidebar.setFixedWidth(SIDEBAR_WIDTH)
         self._sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._sidebar.currentRowChanged.connect(self._on_sidebar_changed)
         self._populate_sidebar()
 
@@ -226,78 +217,4 @@ class MainWindow(QMainWindow):
                     lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
                 )
                 self._stack.addWidget(panel)
-            elif name == "Duplicate Finder":
-                panel = DuplicateFinderPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Fix Double Spaces":
-                panel = FixDoubleSpacesPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Anjuna MB Lookup":
-                panel = AnjunaMBLookupPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "MB Lookup":
-                panel = MBLookupPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Tiesto Lookup":
-                panel = TiestoLookupPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Anjuna Tagger":
-                panel = AnjunaTaggerPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "MB Tagger":
-                panel = MBTaggerPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Tagger Undo":
-                panel = TaggerUndoPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Move from Report":
-                panel = MoveFromReportPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            else:
-                self._stack.addWidget(_PlaceholderPanel(name, desc))
-
-    def _on_theme_changed(self, mode, accent):
-        self._current_mode   = mode
-        self._current_accent = accent
-        apply_theme(mode, accent)
-        QApplication.instance().setStyleSheet(build_stylesheet(mode, accent))
-        self._log.info(f"Theme: {mode}  accent {accent}")
-
-    def _on_sidebar_changed(self, row):
-        if row < 0 or row >= len(self._sidebar_rows):
-            return
-        stack_idx = self._sidebar_rows[row]
-        if stack_idx is None:
-            return
-        self._stack.setCurrentIndex(stack_idx)
-        self._status.showMessage(self._sidebar.item(row).text().strip())
-
-    def log(self):
-        return self._log
+       

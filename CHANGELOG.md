@@ -18,11 +18,39 @@
 
 ## gui/ — PySide6 Application
 
+### v0.5 — 2026-05-27
+
+#### Added
+- `gui/_lookup_base.py` — Shared base panel for the three MB lookup scripts. Folder picker, Auto-match checkbox, Run Lookup button, progress bar, results table (Folder / Status / MB Artist / MB Title / Score), status colour coding.
+- `gui/anjuna_mb_lookup_panel.py` — Anjuna MB Lookup (subclasses base).
+- `gui/mb_lookup_panel.py` — MB Lookup (subclasses base; adds Skip Fingerprinting checkbox).
+- `gui/tiesto_lookup_panel.py` — Tiesto Lookup (subclasses base).
+- `gui/_tagger_base.py` — Shared base panel for both tagger scripts. CSV file picker, Skip Cover Art checkbox, Dry Run / Apply Tags buttons, progress bar, results table (Folder / Status / Files Tagged / New Folder / Notes).
+- `gui/anjuna_tagger_panel.py` — Anjuna Tagger (subclasses base).
+- `gui/mb_tagger_panel.py` — MB Tagger (subclasses base).
+- `gui/tagger_undo_panel.py` — Tagger Undo. CSV picker, Dry Run / Undo Renames, results table (Original Folder / Tagged Folder / Status / Notes).
+- `gui/move_from_report_panel.py` — Move from Report. CSV picker, Dry Run / Move Folders, summary labels (no table — script returns counts only).
+- `gui/main_window.py` — wired all 7 new panels; bumped to v0.5.
+
+---
+
+### v0.4 — 2026-05-27
+
+#### Added
+- `gui/duplicate_finder_panel.py` — Phase 3 first panel. Source folder picker, Use Fingerprinting checkbox, Scan (Dry Run) / Move Duplicates buttons, QThread workers for both scan and apply. Results displayed in four tabs: Exact Matches (auto-move candidates), Duplicates, Better Quality, No Match. Tab labels show live counts. Apply button only enabled when there are actual matches to move. Auto-switches to the most relevant tab after scan.
+- `gui/main_window.py` — wired `DuplicateFinderPanel`; sidebar horizontal scrollbar suppressed (`ScrollBarAlwaysOff`); placeholder label updated to "Coming in Phase 3". Bumped to v0.4.
+
+---
+
 ### v0.3 — 2026-05-27
 
 #### Added
-- `gui/sort_cd_tracks_panel.py` — first fully wired tool panel (Phase 2). Folder picker, Recursive option, Dry Run / Apply buttons, QThread worker, live progress bar, results table with colour-coded statuses, summary row, report path logged. `log_message` signal routes to the main log panel.
-- `gui/main_window.py` — wired `SortCdTracksPanel` in place of the Sort CD Tracks placeholder; import added.
+- `gui/sort_cd_tracks_panel.py` — folder picker, Recursive checkbox, Dry Run / Apply, QThread worker, progress bar, results table (Filename / Disc / Destination / Status), summary row.
+- `gui/clean_album_folders_panel.py` — folder picker, optional holding folder picker with Clear button, Dry Run / Apply, QThread worker, progress bar, results table (File / Extension / Action / Status), summary row.
+- `gui/fix_featuring_panel.py` — folder picker, Dry Run / Apply, QThread worker, progress bar, results table showing original vs new Artist and Title tags, summary row.
+- `gui/fix_double_spaces_panel.py` — folder picker, Dry Run / Apply, QThread worker, progress bar, results table (Folder / Original Filename / New Filename / Status), summary row.
+- All four panels: colour-coded status cells (green = would move/modify/rename, grey = no change needed, yellow = skipped, red = error); Apply button only enabled after a dry run; log_message signal routes to the main log panel.
+- `gui/main_window.py` — wired all four Phase 2 panels in place of their placeholders; imports added. Bumped to v0.3.
 
 ### v0.2 — 2026-05-26
 
