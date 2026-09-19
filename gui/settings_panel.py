@@ -356,7 +356,7 @@ class SettingsPanel(QWidget):
             if "acoustid" not in cfg:
                 cfg["acoustid"] = {}
             cfg["acoustid"]["enabled"]              = self._fp_enabled.isChecked()
-            cfg["acoustid"]["fpcalc_path"]          = self._fp_path.text().strip()
+            cfg["acoustid"]["fpcalc_path"]          = str(Path(self._fp_path.text().strip())) if self._fp_path.text().strip() else ""
             cfg["acoustid"]["similarity_threshold"] = self._fp_threshold.value()
 
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:

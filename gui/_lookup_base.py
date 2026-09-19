@@ -75,6 +75,7 @@ class MBLookupBasePanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._last_browse_folder: str = ""
         self._worker: _LookupWorker | None = None
         self._build_ui()
 
@@ -122,7 +123,7 @@ class MBLookupBasePanel(QWidget):
         self._folder_edit.setPlaceholderText(
             "Select batch folder containing album subfolders…"
         )
-        self._folder_edit.setReadOnly(True)
+        self._folder_edit.editingFinished.connect(self._validate_folder_path)
         browse_btn = QPushButton("Browse…")
         browse_btn.setFixedWidth(90)
         browse_btn.clicked.connect(self._on_browse)
@@ -201,10 +202,28 @@ class MBLookupBasePanel(QWidget):
 
     def _on_browse(self):
         folder = QFileDialog.getExistingDirectory(
-            self, f"Select batch folder — {self._TITLE}"
+            self, f"Select batch folder — {self._TITLE}",
+            self._last_browse_folder or str(Path.home()),
         )
         if folder:
+            self._last_browse_folder = folder
             self._folder_edit.setText(folder)
+
+    def _validate_folder_path(self):
+        """Validate a path typed or pasted directly into the folder field."""
+        text = self._folder_edit.text().strip()
+        if not text:
+            return
+        path = Path(text)
+        if path.exists() and path.is_dir():
+            self._last_browse_folder = str(path)
+            self._refresh_run_btn()
+            if hasattr(self, "_table"):
+                self._table.setRowCount(0)
+            if hasattr(self, "_summary_lbl"):
+                self._summary_lbl.setText("")
+        else:
+            self.log_message.emit(f"Path not found — {text}", "warning")
 
     def _on_run(self):
         folder = self._folder_edit.text()

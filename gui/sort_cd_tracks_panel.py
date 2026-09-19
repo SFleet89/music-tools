@@ -94,6 +94,7 @@ class SortCdTracksPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_results: list[dict] = []
+        self._last_browse_folder: str = ""
         self._worker: _Worker | None = None
         self._build_ui()
         self._set_state("idle")
@@ -139,7 +140,7 @@ class SortCdTracksPanel(QWidget):
 
         self._folder_edit = QLineEdit()
         self._folder_edit.setPlaceholderText("Select a folder to scan...")
-        self._folder_edit.setReadOnly(True)
+        self._folder_edit.editingFinished.connect(self._validate_folder_path)
         browse_btn = QPushButton("Browse")
         browse_btn.setObjectName("browse")
         browse_btn.setFixedWidth(72)
@@ -258,13 +259,34 @@ class SortCdTracksPanel(QWidget):
     def _browse(self):
         folder = QFileDialog.getExistingDirectory(
             self, "Select folder to scan",
-            self._folder_edit.text() or str(Path.home()),
+            (
+            self._last_browse_folder
+            or self._folder_edit.text()
+            or str(Path.home())
+        ),
         )
         if folder:
+            self._last_browse_folder = folder
             self._folder_edit.setText(folder)
             self._set_state("idle")
             self._table.setRowCount(0)
             self._summary_lbl.setText("")
+
+    def _validate_folder_path(self):
+        """Validate a path typed or pasted directly into the folder field."""
+        text = self._folder_edit.text().strip()
+        if not text:
+            return
+        path = Path(text)
+        if path.exists() and path.is_dir():
+            self._last_browse_folder = str(path)
+            self._set_state("idle")
+            if hasattr(self, "_table"):
+                self._table.setRowCount(0)
+            if hasattr(self, "_summary_lbl"):
+                self._summary_lbl.setText("")
+        else:
+            self.log_message.emit(f"Path not found — {text}", "warning")
 
     def _on_run(self):
         folder_text = self._folder_edit.text().strip()

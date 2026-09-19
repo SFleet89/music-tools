@@ -1,7 +1,9 @@
 """
-Music Tools GUI -- Main Window  v0.5
+Music Tools GUI -- Main Window  v1.1
 =====================================
 QMainWindow with sidebar, stacked panels, log, and live theme switching.
+
+v1.1 -- Phase 5: Report Viewer panel added (report_viewer_panel.py).
 """
 
 from __future__ import annotations
@@ -33,11 +35,31 @@ from gui.anjuna_tagger_panel import AnjunaTaggerPanel
 from gui.mb_tagger_panel import MBTaggerPanel
 from gui.tagger_undo_panel import TaggerUndoPanel
 from gui.move_from_report_panel import MoveFromReportPanel
+from gui.build_fp_cache_panel import BuildFpCachePanel
+from gui.sort_albums_to_artists_panel import SortAlbumsToArtistsPanel
+from gui.sort_by_artist_panel import SortByArtistPanel
+from gui.rename_album_folders_panel import RenameAlbumFoldersPanel
+from gui.rename_music_files_panel import RenameMusicFilesPanel
+from gui.rename_to_catno_panel import RenameToCatNoPanel
+from gui.undo_renames_panel import UndoRenamesPanel
+from gui.filename_scanner_panel import FilenameScannerPanel
+from gui.music_integrity_panel import MusicIntegrityPanel
+from gui.library_dupes_panel import LibraryDupesPanel
+from gui.repair_playlists_panel import RepairPlaylistsPanel
+from gui.flac_to_cue_panel import FlacToCuePanel
+from gui.pipeline_panel import PipelinePanel
+from gui.rename_cd_folders_panel import RenameCdFoldersPanel
+from gui.shazam_identify_panel import ShazamIdentifyPanel
+from gui.acoustid_fingerprint_panel import AcousticIDFingerprintPanel
+from gui.acoustid_mb_tagger_panel import AcoustidMbTaggerPanel
+from gui.format_dupe_finder_panel import FormatDupeFinderPanel
+from gui.report_viewer_panel import ReportViewerPanel
 
 
 _SIDEBAR_ITEMS = [
     ("Settings",               False, "Configure folder paths and matching options"),
     ("Appearance",             False, "Theme and accent colour"),
+    ("Report Viewer",          False, "Open any script CSV report -- filter, sort, annotate with Keep/Skip/Move decisions, and export"),
     ("-- ORGANISATION --",     True,  ""),
     ("Sort CD Tracks",         False, "Reads disc number tags and sorts tracks into CD1 / CD2 subfolders"),
     ("Sort Albums to Artists", False, "Moves album folders into the correct artist subfolder using Album Artist tags"),
@@ -55,7 +77,9 @@ _SIDEBAR_ITEMS = [
     ("Fix Double Spaces",      False, "Finds and renames files with double spaces in the filename"),
     ("Music Integrity",        False, "Scans for missing tags, unreadable files, and format-specific issues"),
     ("-- LIBRARY --",          True,  ""),
+    ("Build FP Cache",         False, "Pre-computes audio fingerprints and metadata for the library cache"),
     ("Duplicate Finder",       False, "Compares unsorted downloads against the library and identifies duplicates"),
+    ("Format Dupe Finder",     False, "Finds albums that exist in both MP3 and FLAC and reports which MP3 folders are safe to delete"),
     ("Library Dupes",          False, "Finds tracks duplicated across two or more artist folders"),
     ("Repair Playlists",       False, "Fixes broken file paths in .m3u / .m3u8 playlist files"),
     ("Clean Album Folders",    False, "Moves non-music files out of album folders into a holding folder"),
@@ -69,9 +93,49 @@ _SIDEBAR_ITEMS = [
     ("MB Tagger",              False, "Tags files from a confirmed MusicBrainz lookup report"),
     ("Tagger Undo",            False, "Reverts tags to their pre-tagger values from a backup report"),
     ("Move from Report",       False, "Moves album folders based on a processed lookup report"),
+    ("-- IDENTIFICATION --",    True,  ""),
+    ("Shazam Identify",        False, "Identify unknown audio files via Shazam and write Artist / Title / Album / Year tags"),
+    ("AcousticID Fingerprint", False, "Generate Chromaprint fingerprints and look up MusicBrainz recording IDs via AcousticID"),
+    ("AcousticID MB Tagger",   False, "Look up full MusicBrainz metadata via AcoustID fingerprints and write tags"),
     ("-- PIPELINE --",         True,  ""),
     ("Pipeline",               False, "Runs multiple tools in sequence -- useful for batch processing new downloads"),
 ]
+
+
+# ── Map sidebar name -> panel class ─────────────────────────────────────────
+_PANEL_MAP = {
+    "Report Viewer":          ReportViewerPanel,
+    "Sort CD Tracks":        SortCdTracksPanel,
+    "Clean Album Folders":   CleanAlbumFoldersPanel,
+    "Fix Featuring Tags":    FixFeaturingPanel,
+    "Duplicate Finder":      DuplicateFinderPanel,
+    "Format Dupe Finder":    FormatDupeFinderPanel,
+    "Fix Double Spaces":     FixDoubleSpacesPanel,
+    "Anjuna MB Lookup":      AnjunaMBLookupPanel,
+    "MB Lookup":             MBLookupPanel,
+    "Tiesto Lookup":         TiestoLookupPanel,
+    "Anjuna Tagger":         AnjunaTaggerPanel,
+    "MB Tagger":             MBTaggerPanel,
+    "Tagger Undo":           TaggerUndoPanel,
+    "Move from Report":      MoveFromReportPanel,
+    "Build FP Cache":        BuildFpCachePanel,
+    "Sort Albums to Artists": SortAlbumsToArtistsPanel,
+    "Sort by Artist":        SortByArtistPanel,
+    "Rename Album Folders":  RenameAlbumFoldersPanel,
+    "Rename CD Folders":     RenameCdFoldersPanel,
+    "Rename Music Files":    RenameMusicFilesPanel,
+    "Rename to Cat No.":     RenameToCatNoPanel,
+    "Undo Renames":          UndoRenamesPanel,
+    "Filename Scanner":      FilenameScannerPanel,
+    "Music Integrity":       MusicIntegrityPanel,
+    "Library Dupes":         LibraryDupesPanel,
+    "Repair Playlists":      RepairPlaylistsPanel,
+    "FLAC to CUE":           FlacToCuePanel,
+    "Pipeline":              PipelinePanel,
+    "Shazam Identify":           ShazamIdentifyPanel,
+    "AcousticID Fingerprint":    AcousticIDFingerprintPanel,
+    "AcousticID MB Tagger":      AcoustidMbTaggerPanel,
+}
 
 
 class _PlaceholderPanel(QWidget):
@@ -99,22 +163,22 @@ class _PlaceholderPanel(QWidget):
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setStyleSheet("font-size: 32pt; background: transparent;")
 
-        coming = QLabel("Coming in Phase 3")
+        coming = QLabel("Coming in Phase 4")
         coming.setObjectName("placeholder")
         coming.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        desc = QLabel(description)
-        desc.setObjectName("pageSubtitle")
-        desc.setWordWrap(True)
-        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc.setMaximumWidth(480)
+        desc_lbl = QLabel(description)
+        desc_lbl.setObjectName("pageSubtitle")
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc_lbl.setMaximumWidth(480)
 
         bl.addStretch()
         bl.addWidget(icon)
         bl.addSpacing(8)
         bl.addWidget(coming)
         bl.addSpacing(6)
-        bl.addWidget(desc)
+        bl.addWidget(desc_lbl)
         bl.addStretch()
         layout.addWidget(body, stretch=1)
 
@@ -208,74 +272,8 @@ class MainWindow(QMainWindow):
             elif name == "Appearance":
                 self._appearance_panel = AppearancePanel()
                 self._stack.addWidget(self._appearance_panel)
-            elif name == "Sort CD Tracks":
-                panel = SortCdTracksPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Clean Album Folders":
-                panel = CleanAlbumFoldersPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Fix Featuring Tags":
-                panel = FixFeaturingPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Duplicate Finder":
-                panel = DuplicateFinderPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Fix Double Spaces":
-                panel = FixDoubleSpacesPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Anjuna MB Lookup":
-                panel = AnjunaMBLookupPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "MB Lookup":
-                panel = MBLookupPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Tiesto Lookup":
-                panel = TiestoLookupPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Anjuna Tagger":
-                panel = AnjunaTaggerPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "MB Tagger":
-                panel = MBTaggerPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Tagger Undo":
-                panel = TaggerUndoPanel()
-                panel.log_message.connect(
-                    lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
-                )
-                self._stack.addWidget(panel)
-            elif name == "Move from Report":
-                panel = MoveFromReportPanel()
+            elif name in _PANEL_MAP:
+                panel = _PANEL_MAP[name]()
                 panel.log_message.connect(
                     lambda msg, lvl: getattr(self._log, lvl, self._log.info)(msg)
                 )
