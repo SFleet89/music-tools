@@ -12,6 +12,7 @@ music_resume.json
 
 # ── Reports (timestamped, personal output) ────────────────────────────────────
 **/reports/
+*.xlsx
 
 # ── Generated test content ────────────────────────────────────────────────────
 testing_environment/
@@ -26,9 +27,12 @@ TASKS.md
 Claude Session Hand-offs/
 handoff_*.txt
 skill-observations/
+skill-updates/
 task-observer/
 music-tools-project-skill/
 music-tools-project-skill-workspace/
+HANDOFF.md
+instructions.md
 
 # ── Personal local notes ──────────────────────────────────────────────────────
 Install Notes - claude-mem and code-simplifier.md
@@ -38,6 +42,17 @@ Music Tools — GUI Application Roadmap.pdf
 __pycache__/
 *.pyc
 *.pyo
+*.bak
+
+# ── PyInstaller / packaging build output (keep the .spec — it's the build config) ──
+build/
+dist/
+
+# ── Editor / workspace ────────────────────────────────────────────────────────
+*.code-workspace
+
+# ── FUSE mount artifacts (deleted-but-open files on synced drive) ──────────────
+.fuse_hidden*
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
