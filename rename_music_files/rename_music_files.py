@@ -416,7 +416,9 @@ def run_rename_music_files(
 # =============================================================================
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
 
     dry_run    = "--apply"      not in sys.argv
     pick_dir   = "--pick"       in sys.argv

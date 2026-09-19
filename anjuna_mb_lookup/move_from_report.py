@@ -212,7 +212,9 @@ def run_move_from_report(
 
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
     _args  = [a for a in sys.argv[1:] if not a.startswith("--")]
     _flags = [a for a in sys.argv[1:] if a.startswith("--")]
     apply_mode = "--apply" in _flags

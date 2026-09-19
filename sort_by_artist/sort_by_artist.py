@@ -307,7 +307,9 @@ def run_sort_by_artist(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
 
     DRY_RUN = "--apply" not in sys.argv
 

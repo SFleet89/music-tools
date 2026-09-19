@@ -1,5 +1,26 @@
 # Changelog — repair_playlists.py
 
+
+## v2.0 — 2026-06-14
+
+### Added
+- PW-03: Added `progress_callback=None` parameter to `run_repair_playlists_apply()`. Documented in function docstring. (Scan already had progress_callback.)
+
+---
+
+---
+
+## v1.9 — 2026-05-29
+
+### Added
+- Repaired playlists are now written in **Extended M3U** format.
+  - `#EXTM3U` header added at the top of every output file.
+  - `#EXTINF:-1,Artist - Title` line prepended before each resolved track entry.
+  - Tags are read from the matched file via mutagen (display quality); falls back to library index tags, then to filename stem if unavailable.
+  - Stale `#EXTINF:` and `#EXTM3U` lines from the original file are filtered out and replaced, preventing duplicates.
+  - Unresolved/missing entries (comment lines) are not given EXTINF lines.
+- Added `_extinf_line(file_path, candidate)` internal helper.
+
 ---
 
 ## v1.8 — 2026-05-24

@@ -1,5 +1,5 @@
 """
-Playlist Repair Tool  v1.8
+Playlist Repair Tool  v2.0
 ===========================
 Scans .m3u playlist files and repairs broken paths by searching
 your music library for each track.
@@ -1614,6 +1614,36 @@ def load_selections(selections_path: str) -> dict:
 #  WRITE REPAIRED PLAYLISTS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _extinf_line(file_path: Path, candidate: dict = None) -> str:
+    """
+    Return an #EXTINF:-1,Artist - Title line for the given file.
+    Reads tags via mutagen if available; falls back to candidate tags
+    (normalised) or the filename stem.
+    """
+    artist = title = ""
+    if MUTAGEN_AVAILABLE:
+        try:
+            easy = MutagenFile(file_path, easy=True)
+            if easy:
+                a = easy.get("artist")
+                t = easy.get("title")
+                if a:
+                    artist = a[0].strip()
+                if t:
+                    title = t[0].strip()
+        except Exception:
+            pass
+    # Fallback: use normalised tags from the library index
+    if not title and candidate:
+        title  = candidate.get("title", "")
+        artist = candidate.get("artist", "")
+    # Last resort: filename stem
+    if not title:
+        title = file_path.stem
+    label = f"{artist} - {title}" if artist else title
+    return f"#EXTINF:-1,{label}"
+
+
 def write_repaired_playlists(all_results: dict, output_dir: Path,
                               selections: dict) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1621,15 +1651,21 @@ def write_repaired_playlists(all_results: dict, output_dir: Path,
                "manual_resolved": 0, "manual_path": 0, "skipped": 0, "missing": 0}
 
     for pl_path, lines in all_results.items():
-        out_lines = []
+        out_lines = ["#EXTM3U"]
         for line in lines:
             status = line.get("status", "skip")
 
             if status == "skip":
-                out_lines.append(line["raw"])
+                # Filter out stale EXTINF/EXTM3U lines — we re-generate them.
+                raw = line["raw"]
+                if raw.startswith("#EXTINF:") or raw.strip() == "#EXTM3U":
+                    continue
+                out_lines.append(raw)
 
             elif status == "resolved":
-                rel = to_relative_path(line["candidates"][0]["path"], pl_path)
+                cand = line["candidates"][0]
+                out_lines.append(_extinf_line(cand["path"], cand))
+                rel = to_relative_path(cand["path"], pl_path)
                 out_lines.append(rel)
                 summary["resolved"] += 1
 
@@ -1638,12 +1674,16 @@ def write_repaired_playlists(all_results: dict, output_dir: Path,
                 sel     = selections.get(item_id)
                 if sel and sel.get("manual_path"):
                     # Manual override on an auto entry
+                    mp = Path(sel["manual_path"])
+                    out_lines.append(_extinf_line(mp))
                     out_lines.append(sel["manual_path"].replace("\\", "/"))
                     summary["manual_path"] += 1
                 elif sel and sel.get("index") is not None and sel["index"] >= 0:
                     idx = sel["index"]
                     if idx < len(line["candidates"]):
-                        rel = to_relative_path(line["candidates"][idx]["path"], pl_path)
+                        cand = line["candidates"][idx]
+                        out_lines.append(_extinf_line(cand["path"], cand))
+                        rel = to_relative_path(cand["path"], pl_path)
                         out_lines.append(rel)
                         summary["auto_resolved"] += 1
                     else:
@@ -1654,7 +1694,9 @@ def write_repaired_playlists(all_results: dict, output_dir: Path,
                     # Use the auto_index
                     auto_idx = line.get("auto_index", 0)
                     if auto_idx is not None and auto_idx < len(line["candidates"]):
-                        rel = to_relative_path(line["candidates"][auto_idx]["path"], pl_path)
+                        cand = line["candidates"][auto_idx]
+                        out_lines.append(_extinf_line(cand["path"], cand))
+                        rel = to_relative_path(cand["path"], pl_path)
                         out_lines.append(rel)
                         summary["auto_resolved"] += 1
                     else:
@@ -1666,12 +1708,16 @@ def write_repaired_playlists(all_results: dict, output_dir: Path,
                 item_id = f"{pl_path.name}::{line['line_num']}"
                 sel     = selections.get(item_id)
                 if sel and sel.get("manual_path"):
+                    mp = Path(sel["manual_path"])
+                    out_lines.append(_extinf_line(mp))
                     out_lines.append(sel["manual_path"].replace("\\", "/"))
                     summary["manual_path"] += 1
                 elif sel and sel.get("index") is not None and sel["index"] >= 0:
                     idx = sel["index"]
                     if idx < len(line["candidates"]):
-                        rel = to_relative_path(line["candidates"][idx]["path"], pl_path)
+                        cand = line["candidates"][idx]
+                        out_lines.append(_extinf_line(cand["path"], cand))
+                        rel = to_relative_path(cand["path"], pl_path)
                         out_lines.append(rel)
                         summary["manual_resolved"] += 1
                     else:
@@ -1892,18 +1938,20 @@ def run_repair_playlists_apply(
     output_dir: Path,
     selections: dict = None,
     reports_dir: Path = None,
+    progress_callback=None,
     log_callback=None,
 ) -> dict:
     """
     Write repaired playlist files using previously matched all_results.
 
     Args:
-        all_results:  The all_results dict from run_repair_playlists_scan().
-        output_dir:   Where to write the repaired .m3u files.
-        selections:   User selections keyed by item id (from playlist_selections.json).
-                      Pass {} or None to use auto-resolution only.
-        reports_dir:  Reserved for future use.
-        log_callback: Optional callable(message). Defaults to print().
+        all_results:       The all_results dict from run_repair_playlists_scan().
+        output_dir:        Where to write the repaired .m3u files.
+        selections:        User selections keyed by item id (from playlist_selections.json).
+                           Pass {} or None to use auto-resolution only.
+        reports_dir:       Reserved for future use.
+        progress_callback: Optional callable(current, total, message).
+        log_callback:      Optional callable(message). Defaults to print().
 
     Returns:
         dict: playlists, resolved, auto_resolved, manual_resolved, manual_path,
@@ -1939,7 +1987,7 @@ def main():
 
     print()
     print("=" * 65)
-    print(f"Playlist Repair Tool  v1.8  [{'LIVE RUN' if args.apply else 'DRY RUN'}]")
+    print(f"Playlist Repair Tool  v1.9  [{'LIVE RUN' if args.apply else 'DRY RUN'}]")
     if not args.apply:
         print("*** DRY RUN: No playlists will be written ***")
     print(f"Started       : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

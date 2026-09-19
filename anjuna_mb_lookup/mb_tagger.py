@@ -1,5 +1,5 @@
 """
-MusicBrainz Tagger  v1.4
+MusicBrainz Tagger  v1.6
 ==========================
 Generic version of anjuna_tagger — works with any lookup CSV that has
 a folder_path and mbid column. Reads the CSV, fetches release data from
@@ -45,12 +45,15 @@ try:
     from mutagen.mp4 import MP4, MP4Cover
     from mutagen import File as MutagenFile
     MUTAGEN_AVAILABLE = True
-except ImportError:
-    print("ERROR: mutagen is not installed.")
-    print("       Run: pip install mutagen")
-    sys.exit(1)
+except ImportError as _e:
+    raise ImportError(
+        "mutagen is not installed. Run: pip install mutagen"
+    ) from _e
 
 # ── Shared module ──────────────────────────────────────────────────────────────
+_SCRIPT_DIR = Path(__file__).parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 from music_mb_common import (
     SUPPORTED_EXTENSIONS, MB_API_BASE, USER_AGENT, REQUEST_DELAY,
     mb_get,
@@ -448,7 +451,9 @@ def run_mb_tagger(
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
     APPLY    = "--apply"    in sys.argv
     SKIP_ART = "--skip-art" in sys.argv
     DRY_RUN  = not APPLY
@@ -524,3 +529,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+   

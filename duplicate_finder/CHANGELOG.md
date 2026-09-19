@@ -1,5 +1,164 @@
 # Changelog — Duplicate Finder Tools
 
+
+## build_fp_cache.py — v3.7 — 2026-06-14
+
+### Added
+- `prune_metadata_cache(conn)` — mirrors `prune_fp_cache`. After the metadata
+  scan completes, deletes any `metadata_cache` rows whose file no longer exists
+  on disk. Previously, deleting files from the library left orphaned rows in the
+  DB indefinitely (only the fingerprint cache was pruned).
+- `run_build_fp_cache()` now calls `prune_metadata_cache` after each metadata
+  scan and exposes the result as `pruned_meta` in the returned dict.
+- Metadata section of the run summary now prints `Stale pruned : N` to match
+  the fingerprint section output.
+
+---
+
+## build_fp_cache.py — v3.6 — 2026-06-14
+
+### Fixed
+- PW-02: Replaced `sys.exit(1)` in mutagen ImportError handler with `raise ImportError(...)`. The dead-code `HAS_MUTAGEN = False` branch was also removed (unreachable after the raise).
+
+---
+
+## find_music_duplicates.py — v3.17 — 2026-06-07
+
+### Added / Fixed
+- `get_file_info()` now reads `sample_rate` and `bit_depth` via mutagen
+  (same fields `build_fp_cache` already reads). Previously these were always
+  `None` in files scanned directly by the duplicate finder.
+- `load_cache()` now includes `sample_rate` and `bit_depth` in the in-memory
+  metadata dict so comparison logic can use them.
+- `save_cache()` now preserves `sample_rate` and `bit_depth` from the metadata
+  dict instead of hardcoding `None`, preventing overwrite of values populated by
+  `build_fp_cache`.
+- `unsorted_is_better()` updated for lossless bit-depth awareness:
+  - lossless vs lossless: compares bit depth first (24-bit > 16-bit = Better Quality)
+  - if bit depths are equal or unknown: compares sample rate (96 kHz > 44.1 kHz = Better Quality)
+  - if both fields identical or unknown: treated as equal (→ Duplicate)
+  Previously all lossless-vs-lossless pairs were treated as equal regardless of resolution.
+
+---
+
+## find_music_duplicates.py — v3.16 — 2026-06-07
+
+### Fixed
+- `unsorted_is_better()` was flagging FLAC-vs-FLAC pairs as "Better Quality"
+  when the incoming file had a marginally higher bitrate (e.g. 1522 vs 1517 kbps,
+  a 0.3% difference). For lossless formats the bitrate reflects compression level,
+  not audio quality — both files are from the same master.
+  New logic:
+  - lossless vs lossless → always treated as equal (→ Duplicate, not Better Quality)
+  - lossless replacing lossy → always Better Quality
+  - lossy vs lossless → never Better Quality
+  - lossy vs lossy → Better Quality only if gap is >32 kbps AND >5%
+- Added `_LOSSLESS_FORMATS` frozenset at module level: flac, wav, aiff, aif, alac.
+
+---
+
+## build_fp_cache.py — v3.5 — 2026-06-07
+
+### Fixed
+- Caches built before v3.5 had NULL `bit_depth` and `sample_rate` for all rows.
+  The code to read those fields via mutagen was already present, but the staleness
+  check (mtime + size match → skip) prevented any re-reads.
+  Fix: the staleness check now also treats a lossless file (flac, wav, aiff, alac,
+  m4a, aac) with NULL `bit_depth` as stale, forcing a one-time metadata re-read.
+  After the first v3.5 run all lossless files will have bit_depth/sample_rate
+  populated; subsequent runs will skip them normally.
+
+---
+
+## build_fp_cache.py — v3.4 — 2026-06-01
+
+### Fixed
+- `NameError: name 'MAX_THREADS' is not defined` crash in `build_metadata_cache`.
+  `MAX_THREADS` was referenced but never defined — a refactor left it unset.
+  Fixed by adding `num_threads` parameter to `build_metadata_cache` and passing
+  `_max_t` from `run_build_fp_cache`. Falls back to `os.cpu_count() or 4` if not
+  provided.
+
+---
+
+## find_music_duplicates.py — v3.15 — 2026-06-07
+
+### Fixed
+- `NameError: name 'FUZZY_ENABLED' is not defined` crash when run from the GUI.
+  `FUZZY_ENABLED`, `FUZZY_THRESHOLD`, `USE_DURATION`, `DURATION_TOLERANCE`,
+  `EXACT_SIZE_TOLERANCE`, and `FP_SIMILARITY_THRESHOLD` were only assigned as
+  locals inside `run_find_music_duplicates()` and `main()`, but the module-level
+  helper functions `_str_match()`, `_dur_match()`, and `_size_match()` reference
+  them as globals. When called from the GUI worker thread (`main()` is never
+  invoked), the names did not exist.
+  Fix: added module-level defaults for all six constants; added `global`
+  declarations in `run_find_music_duplicates()` and `main()` so both functions
+  update the module globals that the helpers read.
+
+---
+
+## find_music_duplicates.py — v3.15 — 2026-06-07
+
+### Added
+- Live progress feedback wired through to the GUI panel.
+  `progress_callback` was declared but never called — the progress bar sat
+  dead for the entire scan. Now emits phase labels and per-file counts:
+  - `"Checking library folder structure…"` — during directory walk
+  - `"Reading metadata — N files"` → per-file updates every 250 files
+  - `"Scanning source folder…"` — before unsorted scan
+  - `"Comparing files…"` — before categorisation
+- `progress_callback` parameter added to `scan_folder_with_cache` and
+  `scan_folder_threaded` so both functions report progress to the GUI.
+- Corresponding `duplicate_finder_panel.py` changes (v0.5):
+  - Progress bar switches to animated/indeterminate mode during phase
+    transitions (when file total is unknown), and to percentage mode once
+    a file count is known.
+  - Elapsed-time ticker updates every second:
+    `"Reading metadata [8,234 / 12,450]  (1m 42s)"`
+  - `QTimer` drives the ticker; stops cleanly on scan completion or error.
+
+---
+
+## find_music_duplicates.py — v3.14 — 2026-06-06
+
+### Added
+- `scan_folder_with_cache()` — cache-first folder scanner that replaces the
+  full `rglob` on the organized library for all runs after the first.
+  - Walks **directories only** (no file reads) and compares each folder's
+    `mtime` against a new `folder_index` table in `music_cache.db`.
+  - Only folders whose `mtime` changed (new files added/removed) are
+    re-scanned with `os.scandir`. Unchanged folders are served entirely
+    from `metadata_cache` — no filesystem reads at all.
+  - First run: behaves identically to the old full scan and populates
+    `folder_index`. Subsequent runs with no library changes: directory
+    walk only, result built from DB in seconds.
+  - `--clear-cache` now also clears `folder_index` for the organized
+    folder, forcing a full re-scan.
+- `load_folder_index`, `save_folder_index`, `delete_folder_index_prefix`
+  added to `music_tools_common.py` (schema v5, new `folder_index` table).
+
+### Changed
+- `run_find_music_duplicates()` and `main()` both now use
+  `scan_folder_with_cache` for the organized folder when any cache data
+  exists; fall back to `scan_folder_threaded` on first run (empty cache).
+- `scan_folder_threaded` retained unchanged for the unsorted/source folder
+  (always a fresh scan — no caching benefit there).
+
+---
+
+## find_music_duplicates.py — v3.13 — 2026-06-06
+
+### Fixed
+- `NameError: name 'MAX_THREADS' is not defined` crash when the GUI calls
+  `run_find_music_duplicates()` directly (bypassing `main()`).
+  `MAX_THREADS` was only ever assigned as a local variable inside `main()` and
+  `run_find_music_duplicates()`, so `scan_folder_threaded()` at module scope
+  could never see it. Fixed by adding a module-level default
+  (`MAX_THREADS = os.cpu_count() or 4`) and adding `global MAX_THREADS`
+  declarations in both functions so the config-based value propagates correctly.
+
+---
+
 ## find_music_duplicates.py — v3.12 — 2026-05-25
 
 ### Changed (PW-06 — Config centralisation)

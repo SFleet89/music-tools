@@ -235,7 +235,9 @@ def run_clean_album_folders(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
 
     dry_run  = "--apply" not in sys.argv
     _path    = next((sys.argv[i+1] for i, a in enumerate(sys.argv)

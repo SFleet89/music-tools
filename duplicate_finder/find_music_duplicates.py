@@ -1,5 +1,5 @@
 """
-Music Duplicate Finder & Mover  v3.12
+Music Duplicate Finder & Mover  v3.17
 ======================================
 Compares an unsorted music folder against an organized library and categorises
 every file into one of four buckets:
@@ -71,6 +71,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from music_tools_common import DB_PATH, open_db, init_db, upsert_metadata_rows, pick_folder, SUPPORTED_EXTENSIONS
 from music_tools_common import interactive_options, load_config
+from music_tools_common import load_folder_index, save_folder_index, delete_folder_index_prefix
 
 # ── Optional dependencies with graceful fallbacks ──────────────────────────
 
@@ -107,6 +108,14 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════════════════
 
 DEFAULT_CONFIG_FILE = str(Path(__file__).parent.parent / "music_config.json")
+MAX_THREADS = os.cpu_count() or 4  # module-level default; overridden by config at runtime
+# Matching constants — defaults; overridden at runtime by run_find_music_duplicates() / main()
+FUZZY_ENABLED           = True
+FUZZY_THRESHOLD         = 88.0
+USE_DURATION            = True
+DURATION_TOLERANCE      = 5.0
+EXACT_SIZE_TOLERANCE    = 0.03
+FP_SIMILARITY_THRESHOLD = 85.0
 
 def _validate_config(cfg: dict) -> None:
     """Raise ValueError if the config is missing any required folder keys."""
@@ -130,6 +139,131 @@ def make_pbar(total: int, desc: str, unit: str = "file"):
         def close(self): pass
         def set_postfix_str(self, s): pass
     return _NoopBar()
+
+
+def scan_folder_with_cache(folder: "Path", desc: str,
+                            meta_cache: dict,
+                            folder_index: dict,
+                            max_workers: int = 4,
+                            progress_callback=None) -> "list[dict]":
+    """
+    Cache-first folder scan using per-folder mtime tracking.
+
+    Algorithm
+    ---------
+    1. Walk the directory tree (dirs only — no file reads) and compare each
+       folder's current mtime against folder_index.
+    2. Folders whose mtime changed (or are new) are flagged for re-scan.
+    3. Deleted folders: prune their files from meta_cache and folder_index.
+    4. For changed folders: use os.scandir to find current files, prune stale
+       cache entries, queue files for metadata read (get_file_info_cached still
+       skips unchanged files via mtime/size check).
+    5. Build and return the result list from meta_cache.
+
+    First run (empty folder_index): all folders are "changed" — full scan,
+    identical to the old behaviour.  Subsequent runs with no library changes:
+    directory walk only, result built from cache in seconds.
+    """
+    folder_str = str(folder)
+    sep = os.sep
+
+    # ── Step 1: directory-only walk ──────────────────────────────────────────
+    changed_dirs: set = set()
+    current_dirs: set = set()
+
+    print(f"  Checking {desc} folder tree...", end="", flush=True)
+    for dirpath, dirnames, _ in os.walk(folder):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        dir_str = str(Path(dirpath))
+        current_dirs.add(dir_str)
+        try:
+            mtime = Path(dirpath).stat().st_mtime
+        except OSError:
+            continue
+        if folder_index.get(dir_str, -1.0) != mtime:
+            changed_dirs.add(dir_str)
+            folder_index[dir_str] = mtime
+
+    print(f" {len(current_dirs):,} dirs, {len(changed_dirs)} changed")
+
+    # ── Step 2: handle deleted folders ───────────────────────────────────────
+    deleted_dirs = {
+        d for d in list(folder_index)
+        if (d == folder_str or d.startswith(folder_str + sep)
+            or d.startswith(folder_str + "/"))
+        and d not in current_dirs
+    }
+    for d in deleted_dirs:
+        del folder_index[d]
+
+    dead = [p for p in meta_cache if str(Path(p).parent) in deleted_dirs]
+    for p in dead:
+        del meta_cache[p]
+
+    # ── Step 3: re-scan changed folders ──────────────────────────────────────
+    new_paths: list = []
+    for dir_str in changed_dirs:
+        changed_dir = Path(dir_str)
+        if not changed_dir.exists():
+            continue
+
+        try:
+            current_files = {
+                str(Path(e.path))
+                for e in os.scandir(changed_dir)
+                if e.is_file()
+                and Path(e.name).suffix.lower() in SUPPORTED_EXTENSIONS
+            }
+        except OSError:
+            continue
+
+        stale = [
+            p for p in meta_cache
+            if str(Path(p).parent) == dir_str and p not in current_files
+        ]
+        for p in stale:
+            del meta_cache[p]
+
+        new_paths.extend(Path(fp) for fp in current_files)
+
+    # ── Step 4: read metadata for files in changed folders ───────────────────
+    if new_paths:
+        _total = len(new_paths)
+        _done  = [0]
+        if progress_callback:
+            progress_callback(0, _total, f"Reading metadata — {_total:,} files")
+        pbar = make_pbar(_total, f"{desc} ({_total:,} files to check)")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(get_file_info_cached, p, meta_cache): p
+                for p in new_paths
+            }
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    pbar.set_postfix_str(f"Error: {e}")
+                pbar.update(1)
+                _done[0] += 1
+                if progress_callback and (_done[0] % 250 == 0 or _done[0] == _total):
+                    progress_callback(_done[0], _total, str(futures[future]))
+        pbar.close()
+    elif not changed_dirs and not deleted_dirs:
+        cached_count = sum(
+            1 for p in meta_cache
+            if p.startswith(folder_str + sep) or p.startswith(folder_str + "/")
+        )
+        print(f"  {desc}: no changes — {cached_count:,} files from cache")
+
+    # ── Step 5: build result from meta_cache ─────────────────────────────────
+    results = []
+    for path_str, entry in meta_cache.items():
+        if path_str.startswith(folder_str + sep) or path_str.startswith(folder_str + "/"):
+            e = dict(entry)
+            e["path"] = Path(path_str)
+            results.append(e)
+    return results
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -163,6 +297,8 @@ def load_cache(conn) -> dict:
                 "artist":      r["artist"],
                 "album":       r["album"],
                 "bitrate":     r["bitrate"],
+                "sample_rate": r.get("sample_rate"),
+                "bit_depth":   r.get("bit_depth"),
                 "duration":    r["duration"],
                 "acoustid_id": r.get("acoustid_id"),
             },
@@ -192,8 +328,8 @@ def save_cache(conn, cache: dict) -> None:
             "track_number":None,
             "disc_number": None,
             "bitrate":     meta.get("bitrate"),
-            "sample_rate": None,
-            "bit_depth":   None,
+            "sample_rate": meta.get("sample_rate"),
+            "bit_depth":   meta.get("bit_depth"),
             "duration":    meta.get("duration"),
             "mb_track_id": None,
             "mb_album_id": None,
@@ -266,7 +402,8 @@ def clear_resume(resume_file: str):
 def get_file_info(path: Path) -> dict:
     """Read all metadata from a file in a single mutagen call."""
     size = path.stat().st_size
-    meta = {"title": "", "artist": "", "album": "", "bitrate": None, "duration": None, "acoustid_id": None}
+    meta = {"title": "", "artist": "", "album": "", "bitrate": None, "duration": None,
+            "acoustid_id": None, "sample_rate": None, "bit_depth": None}
 
     try:
         audio = MutagenFile(path)
@@ -291,6 +428,10 @@ def get_file_info(path: Path) -> dict:
                     meta["bitrate"] = info.bitrate
                 if hasattr(info, "length"):
                     meta["duration"] = info.length
+                if hasattr(info, "sample_rate"):
+                    meta["sample_rate"] = info.sample_rate
+                if hasattr(info, "bits_per_sample"):
+                    meta["bit_depth"] = info.bits_per_sample
     except Exception:
         pass
 
@@ -334,15 +475,21 @@ def get_file_info_cached(path: Path, cache: dict) -> dict:
     return info
 
 
-def scan_folder_threaded(folder: Path, desc: str, cache: dict | None = None) -> list[dict]:
+def scan_folder_threaded(folder: Path, desc: str, cache: dict | None = None,
+                          progress_callback=None) -> list[dict]:
     """Recursively collect and read metadata for all supported music files."""
     all_paths = [
         p for p in folder.rglob("*")
         if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
     ]
 
+    total   = len(all_paths)
     results = []
-    pbar    = make_pbar(len(all_paths), desc)
+    done    = [0]
+    pbar    = make_pbar(total, desc)
+
+    if progress_callback:
+        progress_callback(0, total, f"Reading metadata — {total:,} files")
 
     with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
         if cache is not None:
@@ -356,6 +503,9 @@ def scan_folder_threaded(folder: Path, desc: str, cache: dict | None = None) -> 
             except Exception as e:
                 pbar.set_postfix_str(f"Error: {e}")
             pbar.update(1)
+            done[0] += 1
+            if progress_callback and (done[0] % 250 == 0 or done[0] == total):
+                progress_callback(done[0], total, str(futures[future]))
 
     pbar.close()
     return results
@@ -488,12 +638,51 @@ def why_not_exact(u: dict, o: dict) -> str:
     return ", ".join(reasons) if reasons else "minor tag difference"
 
 
+_LOSSLESS_FORMATS = frozenset({"flac", "wav", "aiff", "aif", "alac"})
+
 def unsorted_is_better(u: dict, o: dict) -> bool:
+    """Return True only if the unsorted file is meaningfully higher quality.
+
+    Rules:
+    - lossless vs lossless  → only if bit depth is genuinely higher (e.g. 24-bit > 16-bit)
+                              or sample rate is meaningfully higher (e.g. 96 kHz > 44.1 kHz)
+                              Bitrate differences in FLAC are encoding noise, not audio quality.
+    - lossless vs lossy     → always better
+    - lossy vs lossless     → never better
+    - lossy vs lossy        → better only if >32 kbps AND >5% higher
+    """
+    u_fmt      = (u["metadata"].get("file_format") or "").lower()
+    o_fmt      = (o["metadata"].get("file_format") or "").lower()
+    u_lossless = u_fmt in _LOSSLESS_FORMATS
+    o_lossless = o_fmt in _LOSSLESS_FORMATS
+
+    if u_lossless and not o_lossless:
+        return True    # lossless replacing lossy — always better
+    if not u_lossless and o_lossless:
+        return False   # lossy can't beat lossless
+
+    if u_lossless and o_lossless:
+        # Compare bit depth first: 24-bit > 16-bit is a real quality difference
+        u_bd = u["metadata"].get("bit_depth") or 0
+        o_bd = o["metadata"].get("bit_depth") or 0
+        if u_bd > 0 and o_bd > 0 and u_bd != o_bd:
+            return u_bd > o_bd
+        # Compare sample rate: 96 kHz > 44.1 kHz is hi-res
+        u_sr = u["metadata"].get("sample_rate") or 0
+        o_sr = o["metadata"].get("sample_rate") or 0
+        if u_sr > 0 and o_sr > 0 and u_sr != o_sr:
+            return u_sr > o_sr
+        # Both fields unknown or identical — treat as equal quality
+        return False
+
+    # both lossy — require a meaningful gap
     u_bitrate = u["metadata"].get("bitrate") or 0
     o_bitrate = o["metadata"].get("bitrate") or 0
-    # FIX: Bitrate only — size alone at the same bitrate just means more tag
-    # data (embedded art, extra tags), not better audio quality.
-    return u_bitrate > o_bitrate
+    if o_bitrate == 0:
+        return u_bitrate > 0
+    diff_kbps = u_bitrate - o_bitrate
+    diff_pct  = diff_kbps / o_bitrate
+    return diff_kbps > 32 and diff_pct > 0.05
 
 
 def categorise(unsorted_files: list, organized_index: dict, mode: str,
@@ -1326,6 +1515,8 @@ MODE_DESCRIPTIONS = {
     "4": "Both (filename AND metadata)",
 }
 
+DEFAULT_MODE = "4"  # module-level fallback; overridden by config in main()
+
 def choose_match_mode() -> str:
     print()
     print("=" * 60)
@@ -1467,11 +1658,13 @@ def run_find_music_duplicates(
     _log_str    = _out_cfg.get("log_folder", "")
     _log_folder = Path(log_folder) if log_folder else (Path(_log_str) if _log_str else Path(__file__).parent / "reports")
 
+    global FUZZY_ENABLED, FUZZY_THRESHOLD, USE_DURATION, DURATION_TOLERANCE, EXACT_SIZE_TOLERANCE, FP_SIMILARITY_THRESHOLD  # noqa: PLW0603
     FUZZY_ENABLED           = bool(_match_cfg.get("fuzzy_enabled", True))
     FUZZY_THRESHOLD         = float(_match_cfg.get("fuzzy_threshold", 88))
     USE_DURATION            = bool(_match_cfg.get("use_duration", True))
     DURATION_TOLERANCE      = float(_match_cfg.get("duration_tolerance_seconds", 5))
     EXACT_SIZE_TOLERANCE    = float(_match_cfg.get("exact_match_size_tolerance_percent", 3.0)) / 100.0
+    global MAX_THREADS
     _max_t                  = int(_perf_cfg.get("max_threads", 0))
     MAX_THREADS             = _max_t if _max_t > 0 else (os.cpu_count() or 4)
     CACHE_ENABLED           = bool(_perf_cfg.get("cache_enabled", True))
@@ -1480,6 +1673,7 @@ def run_find_music_duplicates(
     FPCALC_PATH             = _acoustid.get("fpcalc_path", "fpcalc")
     FP_SIMILARITY_THRESHOLD = float(_acoustid.get("similarity_threshold", 85))
     NEAR_MISS_LOW_THRESHOLD = 50.0
+    global DEFAULT_MODE
     DEFAULT_MODE            = str(_match_cfg.get("mode", "4"))
     mode                    = match_mode or DEFAULT_MODE
     mode_label_str          = MODE_DESCRIPTIONS.get(mode, f"Mode {mode}")
@@ -1493,19 +1687,40 @@ def run_find_music_duplicates(
     init_db(db_conn)
     org_cache = {}
 
+    folder_idx: dict = {}
     if CACHE_ENABLED:
         if not clear_cache:
-            org_cache = load_cache(db_conn)
+            org_cache  = load_cache(db_conn)
+            folder_idx = load_folder_index(db_conn, folder_prefix=str(org_folder))
         else:
             db_conn.execute("DELETE FROM metadata_cache")
             db_conn.commit()
+            delete_folder_index_prefix(db_conn, str(org_folder))
 
-    organized_files = scan_folder_threaded(org_folder, "Scanning organized", cache=org_cache if CACHE_ENABLED else None)
+    if progress_callback:
+        progress_callback(0, 0, "Checking library folder structure…")
+    if CACHE_ENABLED and (org_cache or folder_idx):
+        organized_files = scan_folder_with_cache(
+            org_folder, "Organized", org_cache, folder_idx, max_workers=MAX_THREADS,
+            progress_callback=progress_callback,
+        )
+    else:
+        organized_files = scan_folder_threaded(
+            org_folder, "Scanning organized",
+            cache=org_cache if CACHE_ENABLED else None,
+            progress_callback=progress_callback,
+        )
     if CACHE_ENABLED:
         save_cache(db_conn, org_cache)
+        save_folder_index(db_conn, folder_idx)
 
-    unsorted_files = scan_folder_threaded(src_folder, "Scanning unsorted")
+    if progress_callback:
+        progress_callback(0, 0, "Scanning source folder…")
+    unsorted_files = scan_folder_threaded(src_folder, "Scanning unsorted",
+                                          progress_callback=progress_callback)
 
+    if progress_callback:
+        progress_callback(0, 0, "Comparing files…")
     organized_index: dict[str, list[dict]] = {}
     for f in organized_files:
         organized_index.setdefault(f["filename"], []).append(f)
@@ -1678,6 +1893,7 @@ def main():
 
     _match_cfg            = CFG.get("matching", {})
     DEFAULT_MODE          = str(_match_cfg.get("mode", "4"))
+    global FUZZY_ENABLED, FUZZY_THRESHOLD, USE_DURATION, DURATION_TOLERANCE, EXACT_SIZE_TOLERANCE, FP_SIMILARITY_THRESHOLD  # noqa: PLW0603
     FUZZY_ENABLED         = bool(_match_cfg.get("fuzzy_enabled", True))
     FUZZY_THRESHOLD       = float(_match_cfg.get("fuzzy_threshold", 88))
     USE_DURATION          = bool(_match_cfg.get("use_duration", True))
@@ -1685,6 +1901,7 @@ def main():
     EXACT_SIZE_TOLERANCE  = float(_match_cfg.get("exact_match_size_tolerance_percent", 3.0)) / 100.0
 
     _perf_cfg             = CFG.get("performance", {})
+    global MAX_THREADS
     _max_threads          = int(_perf_cfg.get("max_threads", 0))
     MAX_THREADS           = _max_threads if _max_threads > 0 else (os.cpu_count() or 4)
     CACHE_ENABLED         = bool(_perf_cfg.get("cache_enabled", True))
@@ -1788,10 +2005,12 @@ def main():
     db_conn = open_db()
     init_db(db_conn)
 
-    org_cache = {}
+    org_cache:  dict = {}
+    folder_idx: dict = {}
     if CACHE_ENABLED:
         if not CLEAR_CACHE:
-            org_cache = load_cache(db_conn)
+            org_cache  = load_cache(db_conn)
+            folder_idx = load_folder_index(db_conn, folder_prefix=str(organized))
             if org_cache:
                 import time as _time
                 age_days = (_time.time() - DB_PATH.stat().st_mtime) / 86400
@@ -1801,16 +2020,25 @@ def main():
         else:
             db_conn.execute("DELETE FROM metadata_cache")
             db_conn.commit()
-        print(f"  Cache loaded: {len(org_cache)} entries.")
+            delete_folder_index_prefix(db_conn, str(organized))
+        print(f"  Cache loaded: {len(org_cache)} entries, {len(folder_idx)} folder timestamps.")
 
     # ── Scan organized folder ──
     print()
-    organized_files = scan_folder_threaded(organized, "Scanning organized", cache=org_cache if CACHE_ENABLED else None)
-    print(f"  Organized: {len(organized_files)} files found.")
+    if CACHE_ENABLED and (org_cache or folder_idx):
+        organized_files = scan_folder_with_cache(
+            organized, "Organized", org_cache, folder_idx, max_workers=MAX_THREADS
+        )
+    else:
+        organized_files = scan_folder_threaded(
+            organized, "Scanning organized", cache=org_cache if CACHE_ENABLED else None
+        )
+    print(f"  Organized: {len(organized_files):,} files found.")
 
     if CACHE_ENABLED:
         save_cache(db_conn, org_cache)
-        print(f"  Cache saved: {len(org_cache)} entries.")
+        save_folder_index(db_conn, folder_idx)
+        print(f"  Cache saved: {len(org_cache):,} entries, {len(folder_idx):,} folder timestamps.")
 
     # ── Scan unsorted folder (no cache — changes frequently) ──
     print()

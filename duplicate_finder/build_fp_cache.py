@@ -1,5 +1,5 @@
 """
-Music Cache Builder  v3.3
+Music Cache Builder  v3.7
 ==========================
 Pre-builds the cache files used by find_music_duplicates.py so that duplicate
 scans start fast and the fingerprint pass runs near-instantly.
@@ -70,11 +70,10 @@ from music_tools_common import (
 try:
     from mutagen import File as MutagenFile
     HAS_MUTAGEN = True
-except ImportError:
-    HAS_MUTAGEN = False
-    print("ERROR: 'mutagen' is not installed.")
-    print("       Run:  pip install mutagen")
-    sys.exit(1)
+except ImportError as _e:
+    raise ImportError(
+        "mutagen is not installed. Run: pip install mutagen"
+    ) from _e
 
 try:
     from tqdm import tqdm
@@ -225,7 +224,7 @@ def get_file_metadata(path: Path) -> dict:
     return row
 
 
-def build_metadata_cache(folder: Path, conn) -> tuple[int, int]:
+def build_metadata_cache(folder: Path, conn, num_threads: int | None = None) -> tuple[int, int]:
     """
     Scan folder and build/update the metadata_cache table.
 
@@ -236,10 +235,13 @@ def build_metadata_cache(folder: Path, conn) -> tuple[int, int]:
 
     Returns (new_count, cached_count).
     """
-    # Snapshot of what's already in the DB (path → (mtime, size))
+    # Formats where mutagen can read bit_depth — treat NULL bit_depth as stale
+    _BD_FORMATS = frozenset({"flac", "wav", "aiff", "aif", "alac", "m4a", "aac"})
+
+    # Snapshot of what's already in the DB (path → (mtime, size, bit_depth))
     existing = {
-        row["path_str"]: (row["mtime"], row["size"])
-        for row in conn.execute("SELECT path_str, mtime, size FROM metadata_cache")
+        row["path_str"]: (row["mtime"], row["size"], row["bit_depth"])
+        for row in conn.execute("SELECT path_str, mtime, size, bit_depth FROM metadata_cache")
     }
 
     all_paths = [
@@ -261,10 +263,14 @@ def build_metadata_cache(folder: Path, conn) -> tuple[int, int]:
             return None, False
         cached = existing.get(path_str)
         if cached and abs(cached[0] - stat.st_mtime) < 0.01 and cached[1] == stat.st_size:
-            return None, False   # still valid — no rescan needed
+            # Also rescan lossless files that are missing bit_depth (one-time fix
+            # for caches built before bit_depth reading was added in v3.5).
+            fmt = path.suffix.lower().lstrip(".")
+            if fmt not in _BD_FORMATS or cached[2] is not None:
+                return None, False   # still valid — no rescan needed
         return get_file_metadata(path), True
 
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+    with ThreadPoolExecutor(max_workers=num_threads or os.cpu_count() or 4) as executor:
         futures = {executor.submit(process, p): p for p in all_paths}
         for future in as_completed(futures):
             try:
@@ -542,6 +548,22 @@ def prune_fp_cache(conn) -> int:
     return len(stale)
 
 
+def prune_metadata_cache(conn) -> int:
+    """
+    Delete metadata_cache rows for files that no longer exist on disk.
+    Mirrors prune_fp_cache — the metadata scan only processes files it finds
+    on disk, so deleted files leave orphaned rows that accumulate over time.
+
+    Returns the number of entries removed.
+    """
+    all_paths = [row["path_str"] for row in conn.execute("SELECT path_str FROM metadata_cache")]
+    stale = [p for p in all_paths if not Path(p).exists()]
+    if stale:
+        conn.executemany("DELETE FROM metadata_cache WHERE path_str = ?", [(p,) for p in stale])
+        conn.commit()
+    return len(stale)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  WARNINGS CSV
 # ══════════════════════════════════════════════════════════════════════════════
@@ -769,7 +791,7 @@ def run_build_fp_cache(
             print("  Existing fingerprint cache cleared.\n")
 
     result = {
-        "new_meta": 0, "cached_meta": 0,
+        "new_meta": 0, "cached_meta": 0, "pruned_meta": 0,
         "new_fp": 0, "cached_fp": 0,
         "warnings_count": 0,
         "report_path": None,
@@ -778,13 +800,16 @@ def run_build_fp_cache(
 
     if build_meta:
         print("── Metadata Cache ──────────────────────────────────────────\n")
-        new_meta, cached_meta = build_metadata_cache(root, conn)
+        new_meta, cached_meta = build_metadata_cache(root, conn, _max_t)
+        pruned_meta = prune_metadata_cache(conn)
         result["new_meta"]    = new_meta
         result["cached_meta"] = cached_meta
+        result["pruned_meta"] = pruned_meta
         db_size = fmt_size(DB_PATH.stat().st_size) if DB_PATH.exists() else "—"
         print(f"\n  Files scanned   : {new_meta + cached_meta:,}")
         print(f"  New / updated   : {new_meta:,}")
         print(f"  From cache      : {cached_meta:,}")
+        print(f"  Stale pruned    : {pruned_meta:,}")
         print(f"  Database size   : {db_size}")
         print()
 

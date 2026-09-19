@@ -179,7 +179,9 @@ def run_fix_double_spaces(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
 
     dry_run  = "--apply" not in sys.argv
     _path_flag = next(

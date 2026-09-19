@@ -1,5 +1,5 @@
 """
-MusicBrainz Batch Lookup  v1.8
+MusicBrainz Batch Lookup  v2.1
 Generic version of anjuna_mb_lookup — works with any music collection.
 
 Scans a folder of album subfolders, extracts search terms from each folder
@@ -49,6 +49,9 @@ except ImportError:
     print("         Run: pip install mutagen\n")
 
 # ── Shared module ──────────────────────────────────────────────────────────────
+_SCRIPT_DIR = Path(__file__).parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 from music_mb_common import (
     SUPPORTED_EXTENSIONS, MB_API_BASE, USER_AGENT, REQUEST_DELAY,
     RESULT_LIMIT, FUZZY_THRESHOLD, CLEAR_WINNER_GAP, CLEAR_WINNER_MIN,
@@ -126,7 +129,7 @@ def lookup_folder(folder, folder_meta, auto_mode):
     return [], ""
 
 
-def run_lookup(batch_path, auto_mode):
+def run_lookup(batch_path, auto_mode, progress_callback=None):
     folders = scan_batch_folder(batch_path)
     total   = len(folders)
     if total == 0:
@@ -139,6 +142,8 @@ def run_lookup(batch_path, auto_mode):
 
     rows = []
     for idx, folder in enumerate(folders, 1):
+        if progress_callback:
+            progress_callback(idx, total, folder.name)
         print("  [%d/%d]  %s" % (idx, total, folder.name))
 
         folder_meta   = read_folder_metadata(str(folder))
@@ -364,7 +369,7 @@ def run_tiesto_lookup(
     if not batch_path.exists() or not batch_path.is_dir():
         raise ValueError(f"Folder not found: {batch_path}")
 
-    rows = run_lookup(str(batch_path), auto_mode)
+    rows = run_lookup(str(batch_path), auto_mode, progress_callback=progress_callback)
 
     if not rows:
         return {"matched": 0, "auto_matched": 0, "review": 0,
@@ -459,10 +464,4 @@ def main():
         write_csv(rows, str(output_path))
         print_summary(rows, auto_mode, str(output_path))
         if "--move" in _flags:
-            move_flagged_folders(rows, apply_mode="--apply" in _flags)
-    else:
-        print("  No results to save.")
-
-
-if __name__ == "__main__":
-    main()
+            mo

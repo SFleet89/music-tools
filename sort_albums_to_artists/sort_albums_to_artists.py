@@ -407,7 +407,9 @@ def run_sort_albums_to_artists(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
 
     DRY_RUN  = "--apply" not in sys.argv
     PICK_DIR = "--pick"  in sys.argv

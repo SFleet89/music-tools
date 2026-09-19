@@ -369,7 +369,9 @@ def run_fix_featuring_from_csv(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
 
     flags      = [a for a in sys.argv[1:] if a.startswith("--")]
     apply_mode = "--apply"    in flags

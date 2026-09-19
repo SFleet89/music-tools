@@ -1,15 +1,15 @@
 """
-CD Folder Renamer  v1.3
+CD Folder Renamer  v1.4
 ========================
 Finds folders named "CD #" (with a space) and renames them to "CD#" (no space).
 
 Examples:
-    CD 1  →  CD1
-    CD 2  →  CD2
-    CD 10 →  CD10
+    CD 1  ->  CD1
+    CD 2  ->  CD2
+    CD 10 ->  CD10
 
 Usage:
-    python rename_cd_folders.py                      # dry run (default — safe)
+    python rename_cd_folders.py                      # dry run (default -- safe)
     python rename_cd_folders.py --apply              # actually rename
     python rename_cd_folders.py --pick               # pick folder with a dialog
     python rename_cd_folders.py --pick --apply       # pick and rename
@@ -28,15 +28,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from music_tools_common import pick_folder
 from music_tools_common import interactive_options
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
+# -- Paths ---------------------------------------------------------------------
 SCRIPT_DIR     = Path(__file__).parent
 REPORTS_FOLDER = SCRIPT_DIR / "reports"
 
-# ── Parse flags ────────────────────────────────────────────────────────────────
-# ── Interactive options ───────────────────────────────────────────────────────
-interactive_options([
-])
-
+# -- Parse flags ---------------------------------------------------------------
 DRY_RUN  = "--apply" not in sys.argv
 PICK_DIR = "--pick"  in sys.argv
 
@@ -49,11 +45,9 @@ _path_flag = next(
 CD_PATTERN = re.compile(r'^(.*\bCD) (\d+)(.*)$', re.IGNORECASE)
 
 
-# ── Folder picker ───────────────────────────────────────────────────────────────
+# -- Scanner -------------------------------------------------------------------
 
-# ── Scanner ─────────────────────────────────────────────────────────────────────
-
-def find_cd_folders(root: Path) -> list[dict]:
+def find_cd_folders(root):
     """Find all folders matching 'CD #' pattern under root."""
     candidates = []
     for folder in sorted(root.rglob("*")):
@@ -73,9 +67,9 @@ def find_cd_folders(root: Path) -> list[dict]:
     return candidates
 
 
-# ── Report ──────────────────────────────────────────────────────────────────────
+# -- Report --------------------------------------------------------------------
 
-def write_report(candidates: list[dict], root: Path, dry_run: bool):
+def write_report(candidates, root, dry_run):
     fieldnames = ["Parent Folder", "Original Name", "New Name", "Status"]
     rows = []
     for c in candidates:
@@ -104,11 +98,113 @@ def write_report(candidates: list[dict], root: Path, dry_run: bool):
         print(f"  WARNING: Could not write report: {e}\n")
 
 
-# ── Main ────────────────────────────────────────────────────────────────────────
+# -- GUI-callable entry point --------------------------------------------------
+
+def run_rename_cd_folders(folder, apply=False, progress_callback=None, log_callback=None):
+    """
+    GUI-callable wrapper.
+
+    Parameters
+    ----------
+    folder           : str | Path -- root folder to scan.
+    apply            : bool       -- False = dry run, True = rename.
+    progress_callback: callable(current, total, message) | None
+    log_callback     : callable(message) | None
+
+    Returns
+    -------
+    dict with keys:
+        results    : list[dict]  -- one entry per candidate folder
+        pending    : int         -- would-rename count (dry run)
+        renamed    : int         -- actually renamed (apply)
+        skipped    : int         -- target already existed
+        errors     : int         -- rename failures
+        report_path: str | None  -- path to CSV written, or None on failure
+    """
+    root = Path(folder)
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"Folder not found: {root}")
+
+    def _log(msg):
+        if log_callback:
+            log_callback(msg)
+
+    candidates = find_cd_folders(root)
+    total = len(candidates)
+
+    if progress_callback:
+        progress_callback(0, total, "Scanning...")
+
+    renamed = 0
+    skipped = 0
+    errors  = 0
+
+    for i, c in enumerate(candidates):
+        if apply:
+            if c["new_path"].exists():
+                c["status"] = "Skipped -- target exists"
+                skipped += 1
+                _log(f"[SKIP] Target exists: {c['new_name']}")
+            else:
+                try:
+                    shutil.move(str(c["old_path"]), str(c["new_path"]))
+                    c["status"] = "Renamed"
+                    renamed += 1
+                    _log(f"[OK] {c['old_name']} -> {c['new_name']}")
+                except Exception as exc:
+                    c["status"] = f"Error: {exc}"
+                    errors += 1
+                    _log(f"[ERROR] {c['old_name']}: {exc}")
+        else:
+            c["status"] = "Would rename"
+            _log(f"[DRY] {c['old_name']} -> {c['new_name']}")
+
+        if progress_callback:
+            progress_callback(i + 1, total, c["old_name"])
+
+    # Save report
+    report_path_str = None
+    try:
+        REPORTS_FOLDER.mkdir(parents=True, exist_ok=True)
+        timestamp   = datetime.now().strftime('%Y%m%d_%H%M%S')
+        suffix      = "applied" if apply else "dry"
+        report_file = REPORTS_FOLDER / f"rename_cd_folders_{suffix}_{timestamp}.csv"
+        fieldnames  = ["Parent Folder", "Original Name", "New Name", "Status"]
+        with open(report_file, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for c in candidates:
+                try:
+                    parent_rel = str(c["parent"].relative_to(root))
+                except ValueError:
+                    parent_rel = str(c["parent"])
+                writer.writerow({
+                    "Parent Folder": parent_rel,
+                    "Original Name": c["old_name"],
+                    "New Name":      c["new_name"],
+                    "Status":        c.get("status", ""),
+                })
+        report_path_str = str(report_file)
+        _log(f"Report saved: {report_path_str}")
+    except Exception as exc:
+        _log(f"WARNING: Could not write report: {exc}")
+
+    pending = total if not apply else 0
+
+    return {
+        "results":     candidates,
+        "pending":     pending,
+        "renamed":     renamed,
+        "skipped":     skipped,
+        "errors":      errors,
+        "report_path": report_path_str,
+    }
+
+
+# -- Main ----------------------------------------------------------------------
 
 if __name__ == "__main__":
 
-    # Determine root folder
     if _path_flag:
         root = Path(_path_flag.strip('"'))
     else:
@@ -121,9 +217,9 @@ if __name__ == "__main__":
         print(f"ERROR: Folder not found: {root}")
         sys.exit(1)
 
-    mode = "DRY RUN — no folders will be renamed" if DRY_RUN else "LIVE — folders will be renamed"
+    mode = "DRY RUN -- no folders will be renamed" if DRY_RUN else "LIVE -- folders will be renamed"
     print(f"\n{'=' * 60}")
-    print(f"CD Folder Renamer  v1.1")
+    print(f"CD Folder Renamer  v1.4")
     print(f"{'=' * 60}")
     print(f"  Mode   : {mode}")
     print(f"  Folder : {root}")
@@ -150,7 +246,6 @@ if __name__ == "__main__":
         write_report(candidates, root, dry_run=True)
         sys.exit(0)
 
-    # Confirmation prompt before any renaming
     confirm = input(f"  Rename {len(candidates)} folder(s)? (y/n): ").strip().lower()
     while confirm not in ("y", "n"):
         confirm = input("  Please enter y or n: ").strip().lower()
@@ -163,7 +258,7 @@ if __name__ == "__main__":
     for c in candidates:
         if c["new_path"].exists():
             print(f"  [SKIP] Target already exists: {c['new_name']}")
-            c["status"] = "Skipped — target exists"
+            c["status"] = "Skipped -- target exists"
             continue
         try:
             shutil.move(str(c["old_path"]), str(c["new_path"]))

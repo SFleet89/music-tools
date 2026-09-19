@@ -172,7 +172,9 @@ def run_rename_undo(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
 
     args       = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags      = [a for a in sys.argv[1:] if a.startswith("--")]

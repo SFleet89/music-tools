@@ -1,5 +1,5 @@
 """
-Anjunabeats MusicBrainz Batch Lookup  v1.6
+Anjunabeats MusicBrainz Batch Lookup  v1.9
 ===========================================
 Scans a batch folder of Anjunabeats releases, extracts the catalogue
 number from each subfolder name, and looks it up on MusicBrainz.
@@ -67,6 +67,9 @@ except ImportError:
     print("         Run: pip install mutagen\n")
 
 # ── Shared module ──────────────────────────────────────────────────────────────
+_SCRIPT_DIR = Path(__file__).parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 from music_mb_common import (
     SUPPORTED_EXTENSIONS, MB_API_BASE, USER_AGENT, REQUEST_DELAY,
     RESULT_LIMIT, FUZZY_THRESHOLD,
@@ -314,7 +317,7 @@ def scan_batch_folder(batch_path):
 
 # ── Main lookup loop ───────────────────────────────────────────────────────────
 
-def run_lookup(batch_path, auto_mode):
+def run_lookup(batch_path, auto_mode, progress_callback=None):
     folders = scan_batch_folder(batch_path)
     total   = len(folders)
 
@@ -331,6 +334,8 @@ def run_lookup(batch_path, auto_mode):
 
     for idx, (folder, catno) in enumerate(folders, 1):
         folder_name = folder.name
+        if progress_callback:
+            progress_callback(idx, total, folder_name)
         print("  [%d/%d]  %s" % (idx, total, folder_name))
 
         folder_meta = read_folder_metadata(str(folder))
@@ -616,7 +621,7 @@ def run_anjuna_mb_lookup(
     if not batch_path.exists() or not batch_path.is_dir():
         raise ValueError(f"Folder not found: {batch_path}")
 
-    rows = run_lookup(str(batch_path), auto_mode)
+    rows = run_lookup(str(batch_path), auto_mode, progress_callback=progress_callback)
 
     if not rows:
         return {"matched": 0, "auto_matched": 0, "review": 0,
@@ -716,10 +721,4 @@ def main():
         write_csv(all_rows, str(output_path))
         print_summary(all_rows, auto_mode, str(output_path))
         if "--move" in flags:
-            move_flagged_folders(all_rows, apply_mode="--apply" in flags)
-    else:
-        print("  No results to save.")
-
-
-if __name__ == "__main__":
-    main()
+            move_

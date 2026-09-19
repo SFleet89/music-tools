@@ -204,7 +204,9 @@ def run_tagger_undo(
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
-    interactive_options([])
+    interactive_options([
+        ("--apply", "Apply — make changes for real  (default is dry run)"),
+    ])
     APPLY   = "--apply" in sys.argv
     DRY_RUN = not APPLY
 

@@ -1,5 +1,41 @@
 # Changelog — MusicBrainz Tagger Tools
 
+
+## anjuna_tagger.py v1.5 — 2026-06-14
+
+### Fixed
+- PW-02: Replaced `sys.exit(1)` in mutagen ImportError handler with `raise ImportError(...)` so the GUI can catch the error gracefully instead of the process dying.
+
+---
+
+## mb_tagger.py v1.6 — 2026-06-14
+
+### Fixed
+- PW-02: Same mutagen import guard fix as anjuna_tagger.py v1.5.
+
+---
+
+## anjuna_mb_lookup.py v1.9 — 2026-06-14
+
+### Added
+- PW-03: Wired `progress_callback` through to the internal `run_lookup()` helper. The callback was already accepted by `run_anjuna_mb_lookup()` but was silently dropped before this change.
+
+---
+
+## mb_lookup.py v3.2 — 2026-06-14
+
+### Added
+- PW-03: Added `progress_callback=None` to `run_lookup()` internal helper and wired through from `run_mb_lookup()`. Callback fires once per folder: `progress_callback(idx, total, folder_name)`.
+
+---
+
+## tiesto_lookup.py v2.1 — 2026-06-14
+
+### Added
+- PW-03: Added `progress_callback=None` to `run_lookup()` internal helper and wired through from `run_tiesto_lookup()`.
+
+---
+
 ---
 
 ## v1.2 — 2026-05-23
