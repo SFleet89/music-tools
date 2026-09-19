@@ -18,6 +18,79 @@
 
 ## gui/ — PySide6 Application
 
+### v1.1 — 2026-06-14
+
+#### Added
+- `gui/report_viewer_panel.py` v0.1 — **Phase 5: Built-in Report Viewer.**
+  Native replacement for the external HTML viewers. Loads any script CSV
+  report into a sortable, filterable QTableWidget. Key features:
+  - **Decision column** prepended to every report: double-click any row to
+    cycle Keep → Skip → Move → (clear); right-click for direct selection
+    across multiple selected rows simultaneously.
+  - **Live filter bar** searches all columns including the Decision column.
+  - **Decision summary** label (Keep: N  |  Skip: N  |  Move: N) always visible.
+  - **Export CSV** saves the current view (respects active filter) with the
+    Decision column as the first column — compatible with scripts that read
+    a `decision` column (e.g. `remove_library_dupes.py`).
+  - **Recent files** menu tracks the last 8 opened reports (session memory).
+  - **Right-click context menu**: Open in Explorer, Copy path, Copy row as text.
+  - Category row colouring (exact / duplicate / better / no_match) inherited
+    from `ReportViewerDialog` convention.
+  - Pre-existing `Decision` column in a loaded CSV is detected and restored
+    automatically, so previously exported decisions round-trip correctly.
+
+#### Changed
+- `gui/main_window.py` v1.0 → v1.1 — imported `ReportViewerPanel`; added
+  `"Report Viewer"` sidebar entry between Appearance and `-- ORGANISATION --`;
+  added `_PANEL_MAP` entry.
+
+---
+
+### v0.8 — 2026-05-29
+
+#### Changed
+- `gui/duplicate_finder_panel.py` — reworked to two-folder comparison mode (v0.1 → v0.2).
+  - Added **Folder B** picker ("compare against"). Both folders are now explicit — no config dependency.
+  - Removed Apply / Move Duplicates button. Panel is now scan-only (results shown, no files moved).
+  - Worker updated to pass `organized_folder` explicitly to `run_find_music_duplicates`.
+  - Tab column headers updated: "Unsorted File" → "File (A)", "Matched Library File" → "Matched in B".
+- `gui/main_window.py` — bumped to v0.8.
+
+---
+
+### v0.7 — 2026-05-29
+
+#### Added
+- `gui/rename_cd_folders_panel.py` — Rename CD Folders. Folder picker, Dry Run / Apply, results table (Parent Folder / Old Name / New Name / Status). Completes Phase 3 — all sidebar panels are now wired.
+
+#### Changed
+- `gui/main_window.py` — imported `RenameCdFoldersPanel`; added `"Rename CD Folders"` to `_PANEL_MAP`. Bumped to v0.7.
+- `rename_cd_folders/rename_cd_folders.py` — added `run_rename_cd_folders()` GUI-callable entry point. Bumped to v1.4.
+
+---
+
+### v0.6 — 2026-05-28
+
+#### Added
+- `gui/build_fp_cache_panel.py` — Build FP Cache. Folder picker, checkboxes (FP Only, Recheck, Rebuild), progress bar, summary. Added to sidebar under LIBRARY section.
+- `gui/sort_albums_to_artists_panel.py` — Sort Albums to Artists. Folder picker, Dry Run / Apply, results table.
+- `gui/sort_by_artist_panel.py` — Sort by Artist. Folder picker, Dry Run / Apply, results table.
+- `gui/rename_album_folders_panel.py` — Rename Album Folders. Folder picker, Dry Run / Apply, results table.
+- `gui/rename_music_files_panel.py` — Rename Music Files. Folder picker + template string input, Dry Run / Apply, results table.
+- `gui/rename_to_catno_panel.py` — Rename to Cat No. Folder picker, Dry Run / Apply, results table.
+- `gui/undo_renames_panel.py` — Undo Renames. CSV file picker, Dry Run / Undo Renames, results table.
+- `gui/filename_scanner_panel.py` — Filename Scanner. Folder picker, Scan (read-only), results table.
+- `gui/music_integrity_panel.py` — Music Integrity. Folder picker, Quick/Rebuild checkboxes, Scan / Fix VBR, results table.
+- `gui/library_dupes_panel.py` — Library Dupes. No folder picker (reads config), FP/Filename/Rebuild checkboxes, results table.
+- `gui/repair_playlists_panel.py` — Repair Playlists. Two folder pickers, Scan / Repair, results table.
+- `gui/flac_to_cue_panel.py` — FLAC to CUE. File picker (not folder), Skip Existing checkbox, Dry Run / Write CUE.
+- `gui/pipeline_panel.py` — Pipeline. Folder picker, step selection checkboxes, Dry Run / Run Pipeline, results table.
+
+#### Changed
+- `gui/main_window.py` — refactored `_build_stack()` to use `_PANEL_MAP` dict; added Build FP Cache to sidebar; wired 13 new panels; placeholder text now "Coming in Phase 4". Bumped to v0.6.
+
+---
+
 ### v0.5 — 2026-05-27
 
 #### Added
