@@ -2,6 +2,42 @@
 
 ---
 
+## v2.8 — 2026-06-18
+
+### Added
+- **move_for_review config** — file pattern `move_for_review_*`, tabs for Moved / Restored / Errors / All. Status colours: `moved` → green, `would_move` → amber, `restored` → green, `would_restore` → amber.
+
+---
+
+## v2.7 — 2026-06-17
+
+### Fixed
+- **Tab filter broken for mixed-case status values** — the tab filter compared raw CSV cell values directly against the lowercase-underscore tab `statuses` keys (e.g. `'NEEDS REVIEW'` vs `'needs_review'`), so tabs always showed 0 rows even when matching rows existed. Fixed by normalising the cell value (lowercase + spaces→underscores) before the comparison, consistent with how `STATUS_COLORS` already looks up colour keys. Affected: Format Dupe Finder "Needs Review", "Safe to Delete MP3", "FLAC Corrupt" tabs (and any other config whose CSV uses uppercase/spaced verdicts).
+
+---
+
+## v2.6 — 2026-06-16
+
+### Fixed
+- **detectConfig crash on string filePatterns** — configs added in v2.5 used plain strings instead of RegExp for `filePattern`. The detection loop called `.test()` on these, throwing `TypeError: cfg.filePattern.test is not a function` and silently crashing CSV loading for every file. Fixed by checking `instanceof RegExp` before calling `.test()`, falling back to `String.includes()` for plain-string patterns.
+
+---
+
+## v2.5 — 2026-06-14
+
+### Added
+- **7 new REPORT_CONFIGS** for scripts that previously fell through to the generic viewer:
+  - `format_dupe_finder` — statusField `verdict`; score bar for `fp_similarity`; tabs: Needs Review / Safe to Delete MP3 / FLAC Corrupt / All
+  - `acoustid_fingerprint` — statusField `status`; score bar for `acoustid_score`; tabs: Identified / No Match / Errors / All
+  - `acoustid_mb_tagger` — statusField `status`; tabs: Would Tag/Tagged / Flagged / No Match / Errors / All
+  - `shazam_identify` — statusField `Status`; score bar for `Confidence`; tabs: Identified / No Match / All
+  - `sort_by_artist` — statusField `status`; tabs: To Move / Moved / Skipped / Errors / All
+  - `fix_double_spaces` — statusField `Status`; tabs: To Rename / Renamed / Skipped / All
+  - `qobuz_upgrade_finder` — no statusField; numeric columns for bitrate/file count; no tabs
+- **New STATUS_COLORS entries**: `needs_review` (amber), `safe_to_delete_mp3` (green), `flac_corrupt` (red), `identified` (green), `fingerprinted` (green), `would_tag` (amber), `flagged` (amber), `api_error` (red)
+
+---
+
 ## v2.4 — 2026-05-23
 
 ### Added

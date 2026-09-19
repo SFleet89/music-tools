@@ -651,6 +651,14 @@ const STATUS_COLORS = {
   decode_skipped: 'grey', 'no_featuring': 'grey',
   // green (correct / complete states)
   already_correct: 'green', 'already correct': 'green',
+  // format_dupe_finder
+  needs_review: 'amber', safe_to_delete_mp3: 'green', flac_corrupt: 'red',
+  // acoustid_fingerprint / acoustid_mb_tagger / shazam_identify
+  identified: 'green', fingerprinted: 'green',
+  would_tag: 'amber', flagged: 'amber', api_error: 'red',
+  // move_for_review
+  moved: 'green', would_move: 'amber',
+  restored: 'green', would_restore: 'amber',
 };
 
 function statusBadge(val) {
@@ -895,6 +903,149 @@ const REPORT_CONFIGS = [
       { label: 'All',       statuses: [] },
     ],
   },
+  // ── format_dupe_finder ────────────────────────────────────────────────────
+  {
+    id: 'format_dupe_finder',
+    name: 'Format Dupe Finder',
+    filePattern: 'format_dupe_finder',
+    detect: h => h.includes('mp3_folder') && h.includes('fp_similarity'),
+    cols: ['mp3_folder', 'flac_folder', 'mp3_track_count', 'flac_track_count',
+           'tracks_match', 'flac_integrity', 'fp_similarity', 'verdict', 'notes'],
+    statusField: 'verdict',
+    scoreFields: ['fp_similarity'],
+    numFields: ['mp3_track_count', 'flac_track_count', 'fp_similarity'],
+    wrapFields: ['notes'],
+    tabs: [
+      { label: 'Needs Review',      statuses: ['needs_review'] },
+      { label: 'Safe to Delete MP3', statuses: ['safe_to_delete_mp3'] },
+      { label: 'FLAC Corrupt',      statuses: ['flac_corrupt'] },
+      { label: 'All',               statuses: [] },
+    ],
+  },
+  // ── acoustid_fingerprint ──────────────────────────────────────────────────
+  {
+    id: 'acoustid_fingerprint',
+    name: 'AcoustID Fingerprint',
+    filePattern: 'acoustid_fingerprint',
+    detect: h => h.includes('acoustid_score') && h.includes('mb_recording_id'),
+    cols: ['path', 'acoustid_score', 'mb_recording_id', 'mb_title',
+           'mb_artist', 'mb_album', 'status', 'notes'],
+    statusField: 'status',
+    scoreFields: ['acoustid_score'],
+    numFields: ['acoustid_score'],
+    monoFields: ['path', 'mb_recording_id'],
+    wrapFields: ['notes'],
+    tabs: [
+      { label: 'Identified', statuses: ['identified', 'fingerprinted'] },
+      { label: 'No Match',   statuses: ['no match', 'no_match'] },
+      { label: 'Errors',     statuses: ['error', 'api_error'] },
+      { label: 'All',        statuses: [] },
+    ],
+  },
+  // ── acoustid_mb_tagger ────────────────────────────────────────────────────
+  {
+    id: 'acoustid_mb_tagger',
+    name: 'AcoustID MB Tagger',
+    filePattern: 'acoustid_mb_tagger',
+    detect: h => h.includes('acoustid_id') && h.includes('tags_written'),
+    cols: ['path', 'acoustid_id', 'mb_recording_id', 'mb_title', 'mb_artist',
+           'mb_album', 'tags_written', 'status', 'notes'],
+    statusField: 'status',
+    numFields: [],
+    monoFields: ['path', 'acoustid_id', 'mb_recording_id'],
+    wrapFields: ['notes'],
+    tabs: [
+      { label: 'Would Tag / Tagged', statuses: ['would_tag', 'tagged'] },
+      { label: 'Flagged',            statuses: ['flagged'] },
+      { label: 'No Match',           statuses: ['no match', 'no_match'] },
+      { label: 'Errors',             statuses: ['error', 'api_error'] },
+      { label: 'All',                statuses: [] },
+    ],
+  },
+  // ── shazam_identify ───────────────────────────────────────────────────────
+  {
+    id: 'shazam_identify',
+    name: 'Shazam Identify',
+    filePattern: 'shazam_identify',
+    detect: h => h.includes('shazam artist') || (h.includes('shazam_artist') && h.includes('shazam_title')),
+    cols: ['File', 'Shazam Artist', 'Shazam Title', 'Shazam Album',
+           'Confidence', 'Status', 'Notes'],
+    statusField: 'Status',
+    scoreFields: ['Confidence'],
+    numFields: ['Confidence'],
+    monoFields: ['File'],
+    wrapFields: ['Notes'],
+    tabs: [
+      { label: 'Identified', statuses: ['identified'] },
+      { label: 'No Match',   statuses: ['no match', 'no_match'] },
+      { label: 'All',        statuses: [] },
+    ],
+  },
+  // ── sort_by_artist ────────────────────────────────────────────────────────
+  {
+    id: 'sort_by_artist',
+    name: 'Sort by Artist',
+    filePattern: 'sort_by_artist',
+    detect: h => h.includes('artist_found') && h.includes('artist_source'),
+    cols: ['path', 'artist_found', 'artist_source', 'destination', 'status', 'notes'],
+    statusField: 'status',
+    monoFields: ['path', 'destination'],
+    wrapFields: ['notes'],
+    tabs: [
+      { label: 'To Move', statuses: ['would move', 'would_move'] },
+      { label: 'Moved',   statuses: ['moved'] },
+      { label: 'Skipped', statuses: ['skipped'] },
+      { label: 'Errors',  statuses: ['error', 'failed'] },
+      { label: 'All',     statuses: [] },
+    ],
+  },
+  // ── fix_double_spaces ─────────────────────────────────────────────────────
+  {
+    id: 'fix_double_spaces',
+    name: 'Fix Double Spaces',
+    filePattern: 'fix_double_spaces',
+    detect: h => h.includes('original filename') && h.includes('new filename'),
+    cols: ['Original Filename', 'New Filename', 'Folder', 'Status'],
+    statusField: 'Status',
+    wrapFields: [],
+    tabs: [
+      { label: 'To Rename', statuses: ['would rename', 'would_rename'] },
+      { label: 'Renamed',   statuses: ['renamed'] },
+      { label: 'Skipped',   statuses: ['skipped'] },
+      { label: 'All',       statuses: [] },
+    ],
+  },
+  // ── qobuz_upgrade_finder ──────────────────────────────────────────────────
+  {
+    id: 'qobuz_upgrade_finder',
+    name: 'Qobuz Upgrade Finder',
+    filePattern: 'qobuz_upgrade_finder',
+    detect: h => h.includes('min_bitrate_kbps') && h.includes('qobuz_url'),
+    cols: ['artist', 'album', 'local_format', 'file_count', 'min_bitrate_kbps',
+           'max_bitrate_kbps', 'qobuz_format', 'qobuz_bitrate', 'qobuz_url', 'notes'],
+    statusField: null,
+    numFields: ['file_count', 'min_bitrate_kbps', 'max_bitrate_kbps', 'qobuz_bitrate'],
+    monoFields: ['qobuz_url'],
+    wrapFields: ['notes'],
+    tabs: [],
+  },
+  // ── move_for_review ───────────────────────────────────────────────────────
+  {
+    id: 'move_for_review',
+    name: 'Move For Review',
+    filePattern: 'move_for_review',
+    detect: h => h.includes('item') && h.includes('source') && h.includes('dest') && h.includes('error'),
+    cols: ['item', 'status', 'source', 'dest', 'error'],
+    statusField: 'status',
+    monoFields: ['source', 'dest'],
+    wrapFields: ['item', 'source', 'dest', 'error'],
+    tabs: [
+      { label: 'Moved',    statuses: ['moved', 'would_move'] },
+      { label: 'Restored', statuses: ['restored', 'would_restore'] },
+      { label: 'Errors',   statuses: ['error'] },
+      { label: 'All',      statuses: [] },
+    ],
+  },
   {
     id: 'generic',
     name: 'Report',
@@ -910,7 +1061,12 @@ function detectConfig(headers, filename) {
   if (filename) {
     const name = filename.toLowerCase();
     for (const cfg of REPORT_CONFIGS) {
-      if (cfg.filePattern && cfg.filePattern.test(name)) return cfg;
+      if (cfg.filePattern) {
+        const match = cfg.filePattern instanceof RegExp
+          ? cfg.filePattern.test(name)
+          : name.includes(cfg.filePattern.toLowerCase());
+        if (match) return cfg;
+      }
     }
   }
   // 2. Fall back to column-header detection (handles renamed files / manual exports)
@@ -982,9 +1138,13 @@ function applyFiltersAndSort() {
   }
 
   // Tab filter (multi-status): takes precedence over the status dropdown
+  // Normalise the cell value the same way STATUS_COLORS does (lowercase + spaces→underscores)
   if (state.activeTabStatuses !== null && state.activeTabStatuses.length > 0) {
     const sf = state.config && state.config.statusField;
-    if (sf) rows = rows.filter(r => state.activeTabStatuses.includes(r[sf] || ''));
+    if (sf) rows = rows.filter(r => {
+      const norm = (r[sf] || '').toLowerCase().replace(/\s+/g, '_');
+      return state.activeTabStatuses.includes(norm);
+    });
   } else if (state.activeTabStatuses === null && state.filterStatus) {
     // Status dropdown filter — only active when not in tab mode
     const sf = state.config && state.config.statusField;
@@ -1186,7 +1346,10 @@ function renderTabs() {
   const sf = cfg.statusField;
   const countFor = statuses => {
     if (!statuses.length) return state.allData.length;
-    return state.allData.filter(r => statuses.includes(r[sf] || '')).length;
+    return state.allData.filter(r => {
+      const norm = (r[sf] || '').toLowerCase().replace(/\s+/g, '_');
+      return statuses.includes(norm);
+    }).length;
   };
 
   cfg.tabs.forEach((tab, i) => {
