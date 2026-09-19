@@ -1,5 +1,5 @@
 """
-music_tools_common.py — v2.5 — 2026-05-25
+music_tools_common.py — v2.8 — 2026-06-14
 Shared helpers for the Music Tools project.
 
 Provides the project-wide Tier 1 utilities that are otherwise duplicated
@@ -24,6 +24,11 @@ in every standalone script:
                              chosen flags into sys.argv so the rest of the script reads
                              them normally.  Skips the menu if any listed flag is already
                              present (allows direct flag-passing to bypass the prompt).
+                             Also skips when RUNNING_IN_GUI is True.
+
+    RUNNING_IN_GUI         — set to True by GUI panels before importing any script module.
+                             Causes interactive_options() to return immediately (no menu)
+                             and pick_folder() to return None instead of opening a dialog.
 
     ── SQLite cache helpers ──────────────────────────────────────────────────
     DB_PATH                — Path to shared music_cache.db (next to this file)
@@ -48,6 +53,13 @@ import sqlite3
 import sys
 from pathlib import Path
 
+# ── GUI mode flag ──────────────────────────────────────────────────────────────
+# GUI panels should set this to True before importing any script module.
+# Effects:
+#   • interactive_options() returns immediately (no blocking terminal menu)
+#   • pick_folder() returns None instead of opening a tkinter dialog
+RUNNING_IN_GUI: bool = False
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
@@ -60,14 +72,18 @@ def pick_folder(title: str = "Select folder") -> "Path | None":
     Open a native Windows folder-picker dialog.
 
     Returns the selected folder as a Path, or None if the user cancels.
-    Exits with an error message if tkinter is unavailable.
+    Returns None immediately when RUNNING_IN_GUI is True (GUI supplies the
+    folder directly; no dialog should open on top of it).
+    Raises RuntimeError if tkinter is unavailable.
     """
+    if RUNNING_IN_GUI:
+        return None
+
     try:
         import tkinter as tk
         from tkinter import filedialog
     except ImportError:
-        print("ERROR: tkinter is not available on this system.")
-        sys.exit(1)
+        raise RuntimeError("tkinter is not available on this system.")
 
     root_tk = tk.Tk()
     root_tk.withdraw()
@@ -124,15 +140,32 @@ def interactive_options(available_options: list) -> None:
 
     available_options : list of (flag, description) tuples, e.g.
         [
-            ("--apply",     "Apply — make changes for real  (default is dry run)"),
-            ("--recursive", "Recursive — scan all subfolders automatically"),
+            ("--apply",       "Apply — make changes for real  (default is dry run)"),
+            ("--recursive",   "Recursive — scan all subfolders automatically"),
         ]
 
-    If any listed flag is already present in sys.argv the menu is skipped
+    Value-taking options are supported by including the value in the flag string:
+        [
+            ("--sample 3",    "Sample: first 3 tracks per album (default)"),
+            ("--sample half", "Sample: first half of each album"),
+            ("--sample all",  "Sample: every track"),
+        ]
+    The base flag name (--sample) is used for the already-present check; the full
+    string (--sample half) is split and appended to sys.argv on selection.
+
+    If any listed base flag is already present in sys.argv the menu is skipped
     entirely, so passing flags directly still works for scripted / power-user use.
     """
-    control_flags = [opt[0] for opt in available_options]
-    if any(f in sys.argv for f in control_flags):
+    if not available_options:
+        return
+
+    # Skip when running inside the GUI — the GUI provides all options directly.
+    if RUNNING_IN_GUI:
+        return
+
+    # Extract base flag (first word) for the already-present check.
+    base_flags = [opt[0].split()[0] for opt in available_options]
+    if any(f in sys.argv for f in base_flags):
         return
 
     print("\n  Run options:")
@@ -149,9 +182,11 @@ def interactive_options(available_options: list) -> None:
         if part.isdigit():
             idx = int(part) - 1
             if 0 <= idx < len(available_options):
-                flag = available_options[idx][0]
-                if flag not in sys.argv:
-                    sys.argv.append(flag)
+                flag_str = available_options[idx][0]
+                parts    = flag_str.split()
+                # Only inject if the base flag isn't already present
+                if parts[0] not in sys.argv:
+                    sys.argv.extend(parts)
 
 
 def sanitise_folder_name(name: str) -> str:
@@ -233,7 +268,7 @@ DB_PATH = Path(__file__).parent / "music_cache.db"
 
 # Current schema version. Increment this whenever a table or column is added.
 # init_db() will automatically apply any missing migrations on every run.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 # SQL used by init_db — single source of truth for the schema.
 _SCHEMA_SQL = """
@@ -280,11 +315,44 @@ CREATE TABLE IF NOT EXISTS integrity_cache (
     integrity_detail TEXT,
     checked_at       TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mb_acoustid_cache (
+    acoustid_id         TEXT PRIMARY KEY,
+    mb_recording_id     TEXT,
+    title               TEXT,
+    artist              TEXT,
+    album               TEXT,
+    albumartist         TEXT,
+    date                TEXT,
+    tracknumber         TEXT,
+    discnumber          TEXT,
+    label               TEXT,
+    catalognumber       TEXT,
+    country             TEXT,
+    releasetype         TEXT,
+    mb_release_id       TEXT,
+    mb_artist_id        TEXT,
+    mb_albumartist_id   TEXT,
+    candidates_json     TEXT,
+    looked_up_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mb_acoustid ON mb_acoustid_cache(acoustid_id);
+
+CREATE TABLE IF NOT EXISTS folder_index (
+    folder_str  TEXT PRIMARY KEY,
+    mtime       REAL NOT NULL
+);
 """
 
 # Migrations: keyed by the version they bring the DB UP TO.
 # Add a new entry here whenever SCHEMA_VERSION is incremented.
 _MIGRATIONS = {
+    5: [
+        # v5: folder_index table for cache-first directory scanning (no ALTER needed)
+    ],
+    4: [
+        # v4: mb_acoustid_cache table (new table — created by _SCHEMA_SQL, no ALTER needed)
+    ],
     3: [
         # v3: acoustid_id column added to metadata_cache (2026-05-21)
         "ALTER TABLE metadata_cache ADD COLUMN acoustid_id TEXT",
@@ -374,6 +442,41 @@ def upsert_metadata_rows(conn: sqlite3.Connection, rows: list) -> None:
     conn.commit()
 
 
+def load_folder_index(conn, folder_prefix: str = None) -> dict:
+    """
+    Load folder_index from the DB.  Returns {folder_str: mtime}.
+    If folder_prefix is given, only entries whose folder_str starts with that
+    prefix are returned — avoids loading every script's folder data at once.
+    """
+    if folder_prefix:
+        prefix = folder_prefix.rstrip('/\\') + '%'
+        rows = conn.execute(
+            "SELECT folder_str, mtime FROM folder_index WHERE folder_str LIKE ?",
+            (prefix,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT folder_str, mtime FROM folder_index").fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def save_folder_index(conn, folder_index: dict) -> None:
+    """Upsert all entries in folder_index dict into the DB."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO folder_index (folder_str, mtime) VALUES (?, ?)",
+        list(folder_index.items()),
+    )
+    conn.commit()
+
+
+def delete_folder_index_prefix(conn, folder_prefix: str) -> None:
+    """Delete all folder_index entries whose path starts with folder_prefix."""
+    conn.execute(
+        "DELETE FROM folder_index WHERE folder_str LIKE ?",
+        (folder_prefix.rstrip('/\\') + '%',),
+    )
+    conn.commit()
+
+
 def migrate_json_to_db(conn: sqlite3.Connection, script_dir: Path) -> tuple:
     """
     One-time migration of the legacy JSON cache files to the shared SQLite DB.
@@ -418,28 +521,29 @@ def migrate_json_to_db(conn: sqlite3.Connection, script_dir: Path) -> tuple:
     if fp_json.exists():
         try:
             raw = _json.loads(fp_json.read_text(encoding='utf-8'))
-            sql = (
-                "INSERT OR REPLACE INTO fp_cache "
+            sql = (                "INSERT OR REPLACE INTO fp_cache "
                 "(path_str, mtime, fingerprint, fp_duration) "
-                "VALUES (:path_str, :mtime, :fingerprint, :fp_duration)"
+                "VALUES (?, ?, ?, ?)"
             )
             rows = []
             for path_str, entry in raw.items():
                 if not isinstance(entry, dict):
                     continue
-                rows.append({
-                    "path_str":    path_str,
-                    "mtime":       entry.get("mtime", 0.0),
-                    "fingerprint": entry.get("fingerprint", ""),
-                    "fp_duration": entry.get("duration"),
-                })
-            rows = [r for r in rows if r["fingerprint"]]
+                fp = entry.get("fingerprint") or entry.get("fp") or ""
+                if not fp:
+                    continue
+                rows.append((
+                    path_str,
+                    entry.get("mtime", 0.0),
+                    fp,
+                    entry.get("fp_duration") or entry.get("duration"),
+                ))
             if rows:
                 conn.executemany(sql, rows)
                 conn.commit()
                 fp_count = len(rows)
                 print(f"  Migrated {fp_count:,} fingerprint entries from music_fp_cache.json")
-            fp_json.rename(fp_json.with_suffix('.json.migrated'))
+            fp_json.rename(fp_json.with_suffix(".json.migrated"))
         except Exception as exc:
             print(f"  WARNING: could not migrate music_fp_cache.json: {exc}")
 
