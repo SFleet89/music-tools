@@ -1,5 +1,5 @@
 """
-MusicBrainz Tagger  v1.6
+MusicBrainz Tagger  v1.7
 ==========================
 Generic version of anjuna_tagger — works with any lookup CSV that has
 a folder_path and mbid column. Reads the CSV, fetches release data from
@@ -529,4 +529,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-   

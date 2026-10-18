@@ -4,6 +4,13 @@ All notable changes to Sort CD Tracks are documented here.
 
 ---
 
+## Launchers — 2026-10-17
+
+### Fixed
+- `Run - Sort CD Tracks (Dry Run).cmd` and `Run - Sort CD Tracks (Apply).cmd` had trailing NUL padding (9 and 5 bytes) left by an old editing glitch. Removed it; the commands are unchanged. `sort_cd_tracks.py` is unchanged and stays at v1.4.
+
+---
+
 ## v1.4 — 2026-05-24
 
 ### Changed (pre-work for GUI application)

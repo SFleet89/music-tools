@@ -1,6 +1,13 @@
 # Changelog — MusicBrainz Tagger Tools
 
 
+## mb_tagger.py v1.7 — 2026-10-17
+
+### Fixed
+- Removed 3 stray NUL bytes at the end of the file, left by a 2026-06-14 edit and committed on 2026-09-19. Python 3.12+ refuses to compile a source file containing NUL bytes, and the GUI imports this module at startup, so the GUI could not start. No code changes. Verified: `py -3.12 -m py_compile` passes, and `gui.main_window` and `gui.mb_tagger_panel` import cleanly.
+
+---
+
 ## anjuna_tagger.py v1.5 — 2026-06-14
 
 ### Fixed
