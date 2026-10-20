@@ -30,13 +30,14 @@ echo Entry point: gui\main.py
 echo Output: dist\MusicTools\
 echo.
 
+REM music_config.json is NOT bundled: it holds personal folder paths and the
+REM AcoustID key. A new user creates their own via Settings - Save on first run.
 python -m PyInstaller ^
   --name "MusicTools" ^
   --windowed ^
   --noconfirm ^
   --clean ^
   --add-data "gui_config.json;." ^
-  --add-data "music_config.json;." ^
   --hidden-import "PySide6.QtCore" ^
   --hidden-import "PySide6.QtGui" ^
   --hidden-import "PySide6.QtWidgets" ^

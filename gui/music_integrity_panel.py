@@ -1,5 +1,5 @@
 """
-Music Tools GUI -- Music Integrity Panel  v0.3
+Music Tools GUI -- Music Integrity Panel  v0.4
 ===============================================
 GUI panel for music_integrity/check_music_integrity.py.
 
@@ -64,9 +64,9 @@ class _Worker(QThread):
     def run(self):
         try:
             result = run_check_music_integrity(
-                folder=self.folder,
+                root=self.folder,
                 apply=self.apply,
-                quick=self.quick,
+                run_integrity=not self.quick,   # Quick = VBR check only (CLI --quick)
                 rebuild_cache=self.rebuild_cache,
                 progress_callback=lambda c, t, m: self.progress.emit(c, t, m),
                 log_callback=lambda msg: self.log.emit(msg),
@@ -84,6 +84,7 @@ class MusicIntegrityPanel(ScanTimerMixin, QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_results: list[dict] = []
+        self._fixable: int = 0             # vbr_needs_fix count from the last dry run
         self._last_browse_folder: str = ""
         self._last_report_path: Path | None = None
         self._worker: _Worker | None = None
@@ -235,7 +236,8 @@ class MusicIntegrityPanel(ScanTimerMixin, QWidget):
             self._stop_scan_timer()
             self._run_btn.setEnabled(True)
             self._run_btn.setText("Re-scan")
-            self._apply_btn.setEnabled(bool(self._last_results))
+            # Apply only fixes VBR headers, so enable it only when the scan found some to fix
+            self._apply_btn.setEnabled(self._fixable > 0)
             self._load_btn.setEnabled(True)
             self._view_btn.setEnabled(self._last_report_path is not None)
             self._status_lbl.setText("")
@@ -320,13 +322,17 @@ class MusicIntegrityPanel(ScanTimerMixin, QWidget):
         self._on_scan_progress(current, total, message)
 
     def _on_finished(self, result: dict, was_apply: bool):
-        self._last_results = result.get("results", [])
+        # run_check_music_integrity() returns {"rows", "counts", "report_path", "reports_dir"};
+        # counts is keyed by each row's overall_status.
+        self._last_results = result.get("rows", [])
         self._populate_table(self._last_results)
 
-        scanned = result.get("scanned", result.get("total_scanned", 0))
-        issues  = result.get("issues", result.get("vbr_issues", 0))
-        fixed   = result.get("fixed", 0)
-        errors  = result.get("errors", 0)
+        counts  = result.get("counts", {})
+        scanned = len(self._last_results)
+        issues  = scanned - counts.get("ok", 0) - counts.get("error", 0)
+        fixed   = counts.get("vbr_fixed", 0)
+        errors  = counts.get("error", 0)
+        self._fixable = counts.get("vbr_needs_fix", 0)
         report  = result.get("report_path")
 
         if report:
@@ -391,9 +397,11 @@ class MusicIntegrityPanel(ScanTimerMixin, QWidget):
             integrity = row.get("integrity_status", row.get("Integrity", ""))
             status_str = f"{vbr} / {integrity}" if vbr and integrity else (vbr or integrity)
             fg = _status_fg(status_str)
+            # Rows carry one full path (file_path); split it for the Folder / Filename columns
+            fpath = Path(row.get("file_path", ""))
             vals = [
-                row.get("folder", row.get("Folder", "")),
-                row.get("filename", row.get("Filename", "")),
+                row.get("folder", row.get("Folder", str(fpath.parent) if fpath.name else "")),
+                row.get("filename", row.get("Filename", fpath.name)),
                 vbr,
                 integrity,
             ]

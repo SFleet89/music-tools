@@ -18,6 +18,27 @@
 
 ## gui/ — PySide6 Application
 
+### v1.1.1 — 2026-10-20
+
+#### Fixed
+- `gui/music_integrity_panel.py` v0.3 → v0.4 — **the panel never worked.** It called
+  `run_check_music_integrity(folder=..., quick=...)`, but the function takes `root=` and
+  `run_integrity=`, so every scan ended in "Unexpected error". It also read result keys the
+  script doesn't return (`results`/`scanned`/`issues` instead of `rows`/`counts`) and
+  expected `folder`/`filename` per row instead of `file_path`. Now: correct arguments
+  (Quick = `run_integrity=False`); table, counts and summary come from `rows`/`counts`;
+  Folder/Filename split from `file_path`; Fix VBR (Apply) is enabled only when the dry run
+  found `vbr_needs_fix` files (before, it could never be enabled).
+  Verified: offscreen test (`docs/audit_2026-10-20_probes/integrity_panel_test.py`) runs the
+  real worker as a Quick dry run on `testing_environment/clean_album_folders` (19 MP3s):
+  10/10 checks pass; the same test fails 4 checks against the pre-fix panel. All GUI
+  modules import. Not yet clicked through in the running app.
+
+#### Changed
+- `_pyinstaller_build.bat` — no longer bundles `music_config.json` (personal folder paths and
+  AcoustID key) into the exe. A new user creates their own config via Settings → Save.
+  Not yet verified in a built exe (Phase 6 smoke test).
+
 ### v1.1 — 2026-06-14
 
 #### Added
