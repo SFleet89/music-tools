@@ -40,6 +40,8 @@ Music Tools — GUI Application Roadmap.pdf
 
 # ── Local-only tools (personal paths; not published) ──────────────────────────
 qobuz_upgrade_finder/
+organize_spotify/
+compare_spotify_library/
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
