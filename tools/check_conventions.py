@@ -1,5 +1,5 @@
 """
-Music Tools Convention Check  v1.0
+Music Tools Convention Check  v1.1
 
 Read-only check of the project's coding conventions. It opens files only to read
 them and never writes, moves or deletes anything. (The GUI import check runs in a
@@ -37,7 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "1.0"
+VERSION = "1.1"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_ROOT = SCRIPT_DIR.parent
@@ -467,11 +467,43 @@ def check_version_drift(repo: Repo) -> list:
     return out
 
 
+def viewer_file_patterns(viewer: str) -> list:
+    """The filePattern of every REPORT_CONFIGS entry, as Python regexes (JS /.../i or plain string)."""
+    pats = []
+    for m in re.finditer(r"filePattern:\s*(?:/((?:[^/\\\n]|\\.)+)/([a-z]*)|'([^'\n]+)'|\"([^\"\n]+)\")", viewer):
+        if m.group(1) is not None:
+            try:
+                pats.append(re.compile(m.group(1), re.I if "i" in m.group(2) else 0))
+            except re.error:
+                pass
+        else:
+            pats.append(re.compile(re.escape((m.group(3) or m.group(4)).lower()), re.I))
+    return pats
+
+
+def report_name_prefixes(t: ast.AST) -> set:
+    """Report filename prefixes a script writes, e.g. 'anjuna_lookup_' from f"anjuna_lookup_{ts}.csv"."""
+    out = set()
+    for n in ast.walk(t):
+        s = None
+        if isinstance(n, ast.JoinedStr) and n.values and isinstance(n.values[0], ast.Constant) \
+                and any(isinstance(v, ast.Constant) and ".csv" in str(v.value) for v in n.values):
+            s = str(n.values[0].value)
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.endswith(".csv"):
+            s = n.value
+        if s:
+            m = re.match(r"([a-z0-9_]+?_)(?:%|\{|$|[0-9])", s, re.I)
+            if m:
+                out.add(m.group(1))
+    return out
+
+
 def check_viewer_coverage(repo: Repo) -> list:
     v = "report_viewer/viewer.html"
     if v not in repo.files:
         return []
     viewer = repo.text(v)
+    pats = viewer_file_patterns(viewer)
     out = []
     for f in repo.py:
         if not is_tool_script(f) or f.startswith("tools/"):
@@ -481,8 +513,16 @@ def check_viewer_coverage(repo: Repo) -> list:
             continue
         writes = any(isinstance(c, ast.Call) and ast.unparse(c.func).split(".")[-1]
                      in ("writer", "DictWriter", "to_csv", "write_csv") for c in ast.walk(t))
-        if writes and Path(f).stem not in viewer:
-            out.append(("viewer-coverage", f, f"{f}: writes CSV but viewer.html has no config mentioning '{Path(f).stem}'"))
+        if not writes or Path(f).stem in viewer:
+            continue
+        # The script's own name isn't in the viewer; it may still be covered under the
+        # name its reports are saved with (anjuna_mb_lookup.py writes anjuna_lookup_*.csv).
+        samples = [p + "20260101_000000.csv" for p in report_name_prefixes(t)]
+        if any(p.search(s) for p in pats for s in samples):
+            continue
+        names = ", ".join(sorted(report_name_prefixes(t))) or "none found"
+        out.append(("viewer-coverage", f, f"{f}: writes CSV but no viewer.html config matches it "
+                                          f"(script name '{Path(f).stem}', report prefixes: {names})"))
     return out
 
 

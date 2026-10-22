@@ -4,6 +4,20 @@
 
 ## Hooks — claude_guard.py, git-hooks/pre-commit, selftest_hooks.py
 
+### claude_guard.py v1.1 — 2026-10-21
+
+#### Fixed
+- `git stash push` was blocked as if it were `git push`. The push rule now skips
+  `stash push`; a real push is still blocked, including one chained after a stash
+  (`git stash push && git push`) and `git -C stash-dir push`.
+
+#### Verified
+- `selftest_hooks.py`: 4 new command cases. They failed before the fix (4 FAIL) and pass after;
+  whole self-test PASS.
+- `"onFailure": "block"` in `.claude/settings.json` checked against the Claude Code hooks
+  docs: it is a real setting (blocks the command if the guard can't run). Needs Claude Code
+  2.1.295+; the `claude` CLI on PATH here is 2.1.211, which ignores it (README notes this).
+
 ### v1.0 — 2026-10-21
 
 #### Added
@@ -31,6 +45,21 @@
 ---
 
 ## check_conventions.py
+
+### v1.1 — 2026-10-21
+
+#### Fixed
+- `viewer-coverage` warned about scripts whose reports are saved under a different name than
+  the script (`anjuna_mb_lookup.py` → `anjuna_lookup_*.csv`, `find_library_dupes.py` →
+  `library_dupes_*.csv`), although viewer.html has configs for those names. It now also reads
+  the report filename prefixes from the script's `.csv` strings and tests them against every
+  `filePattern` in viewer.html. Warnings 5 → 3; the 3 left are real (`build_fp_cache`,
+  `compare_audio`, `repair_playlists` have no viewer config). The warning text now lists the
+  prefixes it tried.
+
+#### Verified
+- `selftest_check_conventions.py`: new injected case (Anjuna `filePattern` removed) must be
+  reported by `viewer-coverage`; whole self-test PASS.
 
 ### Allowlist update — 2026-10-21 (no code change)
 - Accepted `duplicate_finder/fpcalc.exe`, `music_integrity/mp3val.exe` and

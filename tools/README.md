@@ -96,6 +96,11 @@ Claude straight away if something's wrong. Pushing stays your job.
 
 It is a safety net, not a sandbox: a script Claude writes could still do these
 things. A commit message that mentions "git push" is blocked too; reword it.
+`git stash push` (saving work locally) is allowed.
+
+`.claude/settings.json` sets `"onFailure": "block"`, so if the guard itself can't run
+(e.g. Python missing) the command is blocked rather than let through. That setting needs
+Claude Code 2.1.295 or later; older versions ignore it and let the command through.
 
 ## selftest_hooks.py
 

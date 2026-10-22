@@ -1,5 +1,5 @@
 """
-Claude Code Guard  v1.0
+Claude Code Guard  v1.1
 
 Hook script for Claude Code (wired up in .claude/settings.json). Reads the hook
 event as JSON on stdin. Changes nothing; it only allows, blocks or reports.
@@ -28,14 +28,15 @@ import re
 import sys
 from pathlib import Path
 
-VERSION = "1.0"
+VERSION = "1.1"
 
 PRIVATE_FILES = ("music_config.json", "library_dupes_config.json")
 
 # (pattern, plain-English reason). Matched against the whole command text, so a
 # commit message that merely mentions "git push" is also blocked — reword it.
 BLOCKED = [
-    (r"\bgit\b[^\n|;&]*\bpush\b", "pushing is the user's job — ask them to run git push"),
+    # "git stash push" saves local work and is allowed; any other git ... push is not.
+    (r"\bgit\b(?:(?!\bstash\s)[^\n|;&])*\bpush\b", "pushing is the user's job — ask them to run git push"),
     (r"\breset\b[^\n|;&]*--hard\b", "git reset --hard discards work"),
     (r"\bgit\b[^\n|;&]*\bclean\b[^\n|;&]*\s-[a-zA-Z]*f", "git clean -f deletes untracked files"),
     (r"\bgit\b[^\n|;&]*\bbranch\b[^\n|;&]*(\s-D\b|--delete\s+--force|--force\s+--delete)", "git branch -D deletes a branch"),

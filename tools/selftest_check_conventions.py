@@ -168,6 +168,9 @@ CASES = [
     ("Version drift is a warning, not a failure",
      replace_once("sort_by_artist/sort_by_artist.py", "v1.3", "v9.9"),
      "version-drift", "sort_by_artist/sort_by_artist.py", False, 0),
+    ("Viewer config removed for a report saved under another name",
+     replace_once("report_viewer/viewer.html", "filePattern: /^anjuna_lookup_/i", "filePattern: /^selftest_none_/i"),
+     "viewer-coverage", "anjuna_mb_lookup/anjuna_mb_lookup.py", False, 0),
 ]
 
 # Real defects that commit 227df61^ contained (check id, text the finding must mention).
