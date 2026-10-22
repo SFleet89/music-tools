@@ -2,6 +2,16 @@
 
 ---
 
+## v2.7 — 2026-10-21
+
+### Changed
+- MusicBrainz `User-Agent` contact now points at the public repo
+  (`https://github.com/SFleet89/music-tools`) instead of a personal user name.
+  The version in the agent string was also stale (2.1) and now matches the script.
+- README: the example fpcalc path uses `<you>` instead of a real user name.
+
+---
+
 ## v2.6 — 2026-05-25
 
 ### Changed (PW-01 — GUI-callable function extraction)

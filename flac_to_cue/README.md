@@ -33,7 +33,7 @@ pip install mutagen
 
 **For fingerprinting** — place `fpcalc.exe` (Chromaprint) in the shared tools folder:
 ```
-C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\fpcalc.exe
+C:\Users\<you>\Downloads\ThinQ Back Up 2024\tools\fpcalc.exe
 ```
 Or pass a custom path with `--fpcalc`. If fpcalc is not found, the script continues without fingerprinting.
 

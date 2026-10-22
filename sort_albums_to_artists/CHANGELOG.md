@@ -25,7 +25,7 @@
 ## v1.3 — 2026-05-22
 
 ### Fixed
-- Removed dead `DEFAULT_FOLDER` constant (`C:\Users\neo_s\Downloads\...`).
+- Removed dead `DEFAULT_FOLDER` constant (`C:\Users\<you>\Downloads\...`).
 - Simplified folder resolution: the confusing `if PICK_DIR or (not _path and not PICK_DIR)` conditional replaced with a clean `if _path → else pick_folder → exit if None` pattern.
 
 ---

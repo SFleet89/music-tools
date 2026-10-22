@@ -26,7 +26,7 @@
 ## v2.4 — 2026-05-22
 
 ### Fixed
-- Removed hardcoded `DEFAULT_FOLDER` constant (`C:\Users\neo_s\Downloads\...`). Script now falls back to `config_organized_folder()` from `music_tools_common` when no `--path` or `--pick` is given.
+- Removed hardcoded `DEFAULT_FOLDER` constant (`C:\Users\<you>\Downloads\...`). Script now falls back to `config_organized_folder()` from `music_tools_common` when no `--path` or `--pick` is given.
 
 ### Changed
 - Folder resolution order: `--path` → `--pick` dialog → `config_organized_folder()` from `music_config.json` → clear error message with usage hint.

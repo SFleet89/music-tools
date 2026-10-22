@@ -4,7 +4,7 @@ Runs the music tools processing steps in sequence for a new batch of downloads. 
 
 ## What it does
 
-Opens a folder picker for your batch folder (e.g. `C:\Users\neo_s\Downloads\To Move\`), then shows a numbered menu of pipeline steps. You choose which steps to run, and the pipeline launches each one with the folder path pre-filled — no need to pick the folder in each script separately.
+Opens a folder picker for your batch folder (e.g. `C:\Users\<you>\Downloads\To Move\`), then shows a numbered menu of pipeline steps. You choose which steps to run, and the pipeline launches each one with the folder path pre-filled — no need to pick the folder in each script separately.
 
 ## Pipeline steps
 

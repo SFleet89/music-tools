@@ -1,0 +1,30 @@
+{
+  "_about": "Known problems accepted for now by tools/check_conventions.py. Each entry: check id, finding key (shown with --verbose), reason. Remove an entry once it is fixed; the check warns about entries that no longer match.",
+  "entries": [
+    {"check": "run-exit", "key": "duplicate_finder/compare_audio.py::run_folder_scan::sys.exit", "reason": "Known since audit 2026-10-20 (PW-02); fix pending"},
+    {"check": "run-exit", "key": "move_for_review/move_for_review.py::run_undo::sys.exit", "reason": "Known since audit 2026-10-20 (PW-02); fix pending"},
+    {"check": "run-exit", "key": "move_for_review/move_for_review.py::run_move::sys.exit", "reason": "Known since audit 2026-10-20 (PW-02); fix pending"},
+
+    {"check": "argv-module", "key": "acoustid_fingerprint/acoustid_fingerprint.py", "reason": "Known since audit 2026-10-20 (PW-01); not yet reviewed, may be deliberate"},
+    {"check": "argv-module", "key": "acoustid_mb_tagger/acoustid_mb_tagger.py", "reason": "Known since audit 2026-10-20 (PW-01); not yet reviewed, may be deliberate"},
+    {"check": "argv-module", "key": "move_for_review/move_for_review.py", "reason": "Known since audit 2026-10-20 (PW-01); not yet reviewed, may be deliberate"},
+    {"check": "argv-module", "key": "rename_cd_folders/rename_cd_folders.py", "reason": "Known since audit 2026-10-20 (PW-01); not yet reviewed, may be deliberate"},
+    {"check": "argv-module", "key": "shazam_identify/shazam_identify.py", "reason": "Known since audit 2026-10-20 (PW-01); not yet reviewed, may be deliberate"},
+
+    {"check": "rename", "key": "music_tools_common.py::migrate_json_to_db::meta_json.rename", "reason": "Known since audit 2026-10-20: same-folder rename of an old JSON cache; decide allowlist vs shutil.move"},
+    {"check": "rename", "key": "music_tools_common.py::migrate_json_to_db::fp_json.rename", "reason": "Known since audit 2026-10-20: same-folder rename of an old JSON cache; decide allowlist vs shutil.move"},
+
+    {"check": "folder-files", "key": "acoustid_fingerprint::dry-run-cmd", "reason": "Has 3 launchers named by mode instead of Dry Run / Apply"},
+    {"check": "folder-files", "key": "acoustid_fingerprint::apply-cmd", "reason": "Has 3 launchers named by mode instead of Dry Run / Apply"},
+    {"check": "folder-files", "key": "format_dupe_finder::dry-run-cmd", "reason": "Read-only tool: one launcher"},
+    {"check": "folder-files", "key": "format_dupe_finder::apply-cmd", "reason": "Read-only tool: one launcher"},
+    {"check": "folder-files", "key": "mbz2cue::dry-run-cmd", "reason": "Retired tool"},
+    {"check": "folder-files", "key": "mbz2cue::apply-cmd", "reason": "Retired tool"},
+    {"check": "folder-files", "key": "tools::dry-run-cmd", "reason": "Read-only developer check: one launcher"},
+    {"check": "folder-files", "key": "tools::apply-cmd", "reason": "Read-only developer check: one launcher"},
+
+    {"check": "private-file", "key": "duplicate_finder/fpcalc.exe", "reason": "Third-party fpcalc (Chromaprint) shipped deliberately so fingerprinting works out of the box; user OK 2026-10-21"},
+    {"check": "private-file", "key": "music_integrity/mp3val.exe", "reason": "Third-party mp3val shipped deliberately for the integrity check; user OK 2026-10-21"},
+    {"check": "private-file", "key": "music_integrity/mp3val-frontend.exe", "reason": "Third-party mp3val front end shipped with mp3val; user OK 2026-10-21"}
+  ]
+}

@@ -3,23 +3,23 @@
 # Script : anjuna_mb_lookup.py
 # Viewer : anjuna_lookup_viewer.html
 # Reports: saved next to the script in:
-#          C:\Users\neo_s\Downloads\To Move\anjuna_mb_lookup\reports\
+#          C:\Users\<you>\Downloads\To Move\anjuna_mb_lookup\reports\
 
 # ── Basic usage (asks auto-pick vs review at runtime) ─────────────────────────
 
-python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC"
+python anjuna_mb_lookup.py "C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC"
 
 # ── With mode flag (skips the prompt) ─────────────────────────────────────────
 
-python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC" --auto
-python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC" --review
+python anjuna_mb_lookup.py "C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC" --auto
+python anjuna_mb_lookup.py "C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC" --review
 
 # ── Each batch folder separately ──────────────────────────────────────────────
 
-python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC"
-python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ101-ANJ200-FLAC"
-python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJ201-ANJ345-FLAC"
-python anjuna_mb_lookup.py "C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC\ANJCD001-ANJCD043-FLAC"
+python anjuna_mb_lookup.py "C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC\ANJ001-ANJ100-FLAC"
+python anjuna_mb_lookup.py "C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC\ANJ101-ANJ200-FLAC"
+python anjuna_mb_lookup.py "C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC\ANJ201-ANJ345-FLAC"
+python anjuna_mb_lookup.py "C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC\ANJCD001-ANJCD043-FLAC"
 
 # ── Notes ─────────────────────────────────────────────────────────────────────
 # - Requires: pip install mutagen

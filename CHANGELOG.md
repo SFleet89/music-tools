@@ -174,6 +174,22 @@
 
 ---
 
+## tools/ — Developer checks
+
+### v1.0 — 2026-10-20
+
+#### Added
+- `tools/check_conventions.py`: read-only convention check, exit 0/1, with
+  `conventions_allowlist.json`, a self-test and a `.cmd` launcher. Details and
+  verification in `tools/CHANGELOG.md`.
+
+#### Changed
+- `.gitignore`: `docs/` (local-only audit notes) is now ignored.
+- `report_viewer/old_viewers.rar` made local-only (untracked + gitignored, 2026-10-21);
+  the file stays on disk. Older commits still contain it.
+
+---
+
 ## music_tools_common.py
 
 ### v2.5 — 2026-05-25

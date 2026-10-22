@@ -81,7 +81,7 @@
 ### v1.7 — 2026-05-17
 
 #### Fixed
-- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\neo_s\Downloads\To Move\Anjunabeats_FLAC`). Folder picker now opens at the OS default location.
+- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\<you>\Downloads\To Move\Anjunabeats_FLAC`). Folder picker now opens at the OS default location.
 
 ### v1.6 — 2026-05-17
 
@@ -166,7 +166,7 @@
 ### v2.9 — 2026-05-17
 
 #### Fixed
-- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\neo_s\Downloads\To Move`). Folder picker now opens at the OS default location.
+- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\<you>\Downloads\To Move`). Folder picker now opens at the OS default location.
 
 ### v2.8 — 2026-05-17
 
@@ -262,7 +262,7 @@
 ### v1.9 — 2026-05-17
 
 #### Fixed
-- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\neo_s\Downloads\To Move`). Folder picker now opens at the OS default location.
+- Removed hardcoded `initialdir` pointing to a machine-specific path (`C:\Users\<you>\Downloads\To Move`). Folder picker now opens at the OS default location.
 
 ### v1.8 — 2026-05-17
 
@@ -359,7 +359,7 @@
 
 #### Changed
 - Added `sys.path.insert` + `from music_tools_common import load_csv`. Removes local duplicate `load_csv()` function.
-- Fixed hardcoded `initialdir` in file picker: was pointing to `C:\Users\neo_s\Downloads\ThinQ Back Up 2024\tools\reports`; now resolves to `<project root>/reports` dynamically.
+- Fixed hardcoded `initialdir` in file picker: was pointing to `C:\Users\<you>\Downloads\ThinQ Back Up 2024\tools\reports`; now resolves to `<project root>/reports` dynamically.
 
 ---
 

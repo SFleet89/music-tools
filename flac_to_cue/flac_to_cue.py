@@ -1,5 +1,5 @@
 """
-Audio to CUE  v2.6
+Audio to CUE  v2.7
 ==================
 Generates a CUE sheet for an audio file using MusicBrainz data.
 
@@ -58,6 +58,10 @@ Output:
 
     Reports saved to: <script folder>\\..\\reports\\flac_to_cue_YYYYMMDD_HHMMSS.csv
     Logs saved to:    <script folder>\\..\\reports\\flac_to_cue_YYYYMMDD_HHMMSS.log
+
+Changes in v2.7:
+    - MusicBrainz User-Agent contact now points at the public repo
+      (github.com/SFleet89/music-tools) instead of a personal user name.
 
 Changes in v2.6:
     - PW-01: Extracted run_flac_to_cue() as GUI-callable core function.
@@ -170,7 +174,7 @@ except ImportError:
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 MB_API      = "https://musicbrainz.org/ws/2"
-USER_AGENT  = "flac_to_cue/2.1 ( https://github.com/neo_s )"
+USER_AGENT  = "flac_to_cue/2.7 ( https://github.com/SFleet89/music-tools )"
 RATE_LIMIT  = 1.1
 _last_call  = 0.0
 
@@ -1022,7 +1026,7 @@ def run_flac_to_cue(
 
     log.info("")
     log.info("=" * 60)
-    log.info("  Audio to CUE  v2.6")
+    log.info("  Audio to CUE  v2.7")
     log.info("=" * 60)
     log.info("  Mode    : %s" % mode_label)
     if forced_mbid:

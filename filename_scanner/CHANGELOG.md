@@ -68,7 +68,7 @@ All notable changes to the filename scanner scripts are documented here.
 ## scan_music_filenames.py v2.4 / fix_double_spaces.py v2.0 — 2026-05-22
 
 ### Fixed
-- **`scan_music_filenames.py`** — removed hardcoded `DEFAULT_FOLDER` (`C:\Users\neo_s\Downloads\...`). Script now resolves the target folder via: `--path` flag → `--pick` folder dialog → `config_organized_folder()` from `music_tools_common` → error with usage hint.
+- **`scan_music_filenames.py`** — removed hardcoded `DEFAULT_FOLDER` (`C:\Users\<you>\Downloads\...`). Script now resolves the target folder via: `--path` flag → `--pick` folder dialog → `config_organized_folder()` from `music_tools_common` → error with usage hint.
 - **`scan_music_filenames.py`** — `SKIP_LIST_FILE` was a hardcoded absolute path; changed to `SCRIPT_DIR / "scan_skip_list.txt"` (relative to script). Gracefully returns `[]` if file is absent.
 - **`scan_music_filenames.py`** — `load_skip_list` type annotation changed from `path: str` to bare `path` to accept `Path` objects.
 - **`fix_double_spaces.py`** — removed hardcoded `DEFAULT_FOLDER`; added `--pick` flag and `config_organized_folder()` fallback (same three-step resolution as above).

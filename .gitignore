@@ -34,6 +34,9 @@ music-tools-project-skill-workspace/
 HANDOFF.md
 instructions.md
 
+# ── Local-only audit notes and probe scripts (never publish) ──────────────────
+docs/
+
 # ── Personal local notes ──────────────────────────────────────────────────────
 Install Notes - claude-mem and code-simplifier.md
 Music Tools — GUI Application Roadmap.pdf
@@ -42,6 +45,9 @@ Music Tools — GUI Application Roadmap.pdf
 qobuz_upgrade_finder/
 organize_spotify/
 compare_spotify_library/
+
+# ── Local-only archive of the old per-script viewers (not published) ──────────
+report_viewer/old_viewers.rar
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
