@@ -176,6 +176,16 @@
 
 ## tools/ — Developer checks
 
+### v1.1 — 2026-10-21
+
+#### Added
+- Git pre-commit hook (`tools/git-hooks/pre-commit`), Claude Code guard
+  (`tools/claude_guard.py`) and `tools/selftest_hooks.py`. Details in `tools/CHANGELOG.md`.
+
+#### Changed
+- `.gitignore`: `.claude/` (local Claude Code settings) is ignored.
+- `.gitattributes`: `tools/git-hooks/*` always uses LF line endings.
+
 ### v1.0 — 2026-10-20
 
 #### Added

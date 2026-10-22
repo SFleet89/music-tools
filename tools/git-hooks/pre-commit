@@ -1,0 +1,28 @@
+#!/bin/sh
+# Music Tools pre-commit hook v1.0
+# Runs the read-only convention check (quick mode, no GUI import check) before
+# every commit and blocks the commit if any check fails.
+# Turned on with:  git config core.hooksPath tools/git-hooks
+# Full report:     python -B -X utf8 tools/check_conventions.py
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+PY=""
+for cand in python py python3; do
+    if command -v "$cand" >/dev/null 2>&1; then PY="$cand"; break; fi
+done
+if [ -z "$PY" ]; then
+    echo "pre-commit: Python was not found, so the convention check could not run."
+    echo "pre-commit: commit BLOCKED. Install Python or add it to PATH, then try again."
+    exit 1
+fi
+
+"$PY" -B -X utf8 tools/check_conventions.py --no-imports
+status=$?
+if [ "$status" -ne 0 ]; then
+    echo ""
+    echo "pre-commit: convention check FAILED (exit $status) - commit BLOCKED."
+    echo "pre-commit: fix the problems listed above, then commit again."
+    exit 1
+fi
+exit 0

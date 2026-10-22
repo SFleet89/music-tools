@@ -72,6 +72,41 @@ python -B -X utf8 tools/selftest_check_conventions.py --rev <commit> --keep
 
 Run it after any change to `check_conventions.py`.
 
+## git-hooks/pre-commit
+
+Runs `check_conventions.py --no-imports` (about 6 seconds) before every commit and
+blocks the commit if any check fails, or if Python can't be found. Turn it on once
+per copy of the repo:
+
+```
+git config core.hooksPath tools/git-hooks
+```
+
+It checks the files on disk, not exactly what's staged, and new files that aren't
+gitignored count too. To skip it on purpose for one commit: `git commit --no-verify`.
+
+## claude_guard.py
+
+The hook script for Claude Code, wired up in `.claude/settings.json` (local only,
+gitignored). Before a Bash or PowerShell command it blocks: `git push`, `reset --hard`,
+`clean -f`, `branch -D`, `checkout .` / `restore .`, `--no-verify`, changes to
+`core.hooksPath`, and anything naming `music_config.json` or `library_dupes_config.json`.
+After Claude edits a file it scans for NUL bytes and compiles `.py` files, and tells
+Claude straight away if something's wrong. Pushing stays your job.
+
+It is a safety net, not a sandbox: a script Claude writes could still do these
+things. A commit message that mentions "git push" is blocked too; reword it.
+
+## selftest_hooks.py
+
+Proves the guard and the pre-commit hook can fail: every blocked command in both
+shells, everyday commands that must stay allowed, broken and clean edited files, and
+in a temp copy of the project a clean commit (allowed) and a NUL-byte commit (refused).
+
+```
+python -B -X utf8 tools/selftest_hooks.py
+```
+
 ## Requirements
 
 Python 3.12+, git on PATH. The GUI import check needs PySide6 (as the app does).

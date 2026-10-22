@@ -33,6 +33,7 @@ music-tools-project-skill/
 music-tools-project-skill-workspace/
 HANDOFF.md
 instructions.md
+.claude/
 
 # ── Local-only audit notes and probe scripts (never publish) ──────────────────
 docs/

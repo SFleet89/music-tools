@@ -2,6 +2,34 @@
 
 ---
 
+## Hooks — claude_guard.py, git-hooks/pre-commit, selftest_hooks.py
+
+### v1.0 — 2026-10-21
+
+#### Added
+- `git-hooks/pre-commit`: runs the quick convention check before every commit; blocks on
+  failure or missing Python. LF endings forced in `.gitattributes`. Enabled with
+  `git config core.hooksPath tools/git-hooks`.
+- `claude_guard.py`: Claude Code hook script. `pre` blocks destructive git commands,
+  pushing, skipping the hooks, and naming the personal config files; `post` NUL-scans and
+  compiles edited files. Wired in `.claude/settings.json` (gitignored), which also denies
+  reading the two config files.
+- `selftest_hooks.py`.
+
+#### Verified
+- Self-test passes: 55 guard command cases, 7 edited-file cases, pre-commit allows a
+  clean commit and refuses a NUL-byte commit (HEAD unchanged), settings wiring.
+- Self-test fails (exit 1) when a guard rule is removed, and when the pre-commit hook
+  ignores a failed check (both on copies).
+- Live: the guard blocked a `git config core.hooksPath` command in the session that
+  created it.
+
+#### Not verified
+- The pre-commit hook on a real commit in the live repo (waits for the user to set
+  `core.hooksPath`). The Read-deny rule was not triggered.
+
+---
+
 ## check_conventions.py
 
 ### Allowlist update — 2026-10-21 (no code change)
