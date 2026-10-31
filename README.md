@@ -8,8 +8,10 @@ A collection of Python utilities for organising, cleaning, and deduplicating a m
 
 **1. Install Python packages**
 
+Double-click `Install Dependencies.cmd`, or run:
+
 ```
-pip install mutagen tqdm rapidfuzz
+python -m pip install -r requirements.txt
 ```
 
 **2. Run the setup wizard**
@@ -188,7 +190,7 @@ Batch-looks up Anjunabeats, Tiësto, and similar releases on MusicBrainz using c
 | `tagger_undo.py` | Reverts tags to their pre-tagger values from a backup report |
 | `move_from_report.py` | Moves folders based on a processed lookup report |
 
-Requires: `pip install musicbrainzngs requests`
+Requires: `musicbrainzngs` (in `requirements.txt`)
 
 ---
 
@@ -221,16 +223,10 @@ These files are used by multiple tools and must stay in the project root:
 
 ## Requirements
 
-**Core (needed by most tools):**
+All Python packages are listed in `requirements.txt`:
 
 ```
-pip install mutagen tqdm rapidfuzz
-```
-
-**MusicBrainz suite only:**
-
-```
-pip install musicbrainzngs requests beautifulsoup4
+python -m pip install -r requirements.txt
 ```
 
 **Audio fingerprinting (optional, duplicate finder only):**
@@ -239,12 +235,15 @@ Download `fpcalc` from [acoustid.org/chromaprint](https://acoustid.org/chromapri
 
 | Package | Used by |
 |---|---|
+| `PySide6` | The GUI |
 | `mutagen` | Everything — reads and writes audio tags |
 | `tqdm` | Progress bars |
-| `rapidfuzz` | Fuzzy string matching in duplicate finder |
-| `musicbrainzngs` | Anjuna MB lookup suite |
-| `requests` | MB lookup suite, mbz2cue |
-| `beautifulsoup4` | mbz2cue |
+| `rapidfuzz` | Fuzzy string matching (duplicate finder, library dupes, playlist repair) |
+| `musicbrainzngs` | MusicBrainz lookups and tagging |
+| `requests` | AcoustID tools |
+| `shazamio` | Shazam Identify (unofficial, may break without notice) |
+
+`beautifulsoup4` is needed only by the retired `mbz2cue` tool, so it isn't in `requirements.txt`.
 
 ---
 

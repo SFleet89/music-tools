@@ -10,8 +10,10 @@ Or double-click **`Run - Music Tools GUI.cmd`** in the project root.
 
 ## Requirements
 
+PySide6, listed in the project's `requirements.txt`:
+
 ```
-pip install PySide6
+python -m pip install -r requirements.txt
 ```
 
 ## Platform compatibility

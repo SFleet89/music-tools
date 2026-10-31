@@ -1,0 +1,16 @@
+# Music Tools - Python packages. Install with:
+#     python -m pip install -r requirements.txt
+# Or double-click "Install Dependencies.cmd".
+#
+# Minimum versions are the ones this project is run with. shazamio has no minimum
+# because no version has been recorded here yet.
+# Not listed: beautifulsoup4 (only the retired mbz2cue tool uses it).
+# Not Python packages: fpcalc.exe and ffmpeg must be installed separately.
+
+PySide6>=6.11       # GUI
+mutagen>=1.47       # reading and writing audio tags (most tools)
+tqdm>=4.68          # progress bars
+rapidfuzz>=3.14     # fuzzy matching (duplicate finder, library dupes, playlist repair)
+musicbrainzngs>=0.7 # MusicBrainz lookups and tagging
+requests>=2.34      # web lookups (AcoustID tools)
+shazamio            # Shazam Identify (unofficial library, may break without notice)

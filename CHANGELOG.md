@@ -2,7 +2,25 @@
 
 ---
 
+## requirements.txt and Install Dependencies.cmd
+
+### v1.0 — 2026-10-30
+
+#### Added
+- `requirements.txt`: all third-party packages the tracked scripts import, except `beautifulsoup4` (retired `mbz2cue` only).
+
+#### Changed
+- `Install Dependencies.cmd` installs from `requirements.txt`. It used to install only PySide6, mutagen and musicbrainzngs, leaving out tqdm, rapidfuzz, requests and shazamio.
+- It now uses `python -m pip`, so packages go to the same Python the launchers run, and it reports a failed install instead of always printing "Done".
+
+---
+
 ## README.md
+
+### v2.1 — 2026-10-30
+
+#### Changed
+- Install steps and the package table now point to `requirements.txt`.
 
 ### v2.0 — 2026-05-26
 
