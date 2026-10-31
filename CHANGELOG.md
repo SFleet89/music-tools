@@ -202,6 +202,11 @@
 
 ## music_tools_common.py
 
+### v2.9 — 2026-10-30
+
+#### Changed
+- Comments only: `RUNNING_IN_GUI` is now set by `gui/main.py` (v0.2) at startup, before any script module is imported. Until now nothing in the GUI set it. No code change in this file.
+
 ### v2.5 — 2026-05-25
 
 #### Added

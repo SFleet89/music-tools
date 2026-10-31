@@ -1,5 +1,5 @@
 """
-music_tools_common.py — v2.8 — 2026-06-14
+music_tools_common.py — v2.9 — 2026-10-30
 Shared helpers for the Music Tools project.
 
 Provides the project-wide Tier 1 utilities that are otherwise duplicated
@@ -26,7 +26,7 @@ in every standalone script:
                              present (allows direct flag-passing to bypass the prompt).
                              Also skips when RUNNING_IN_GUI is True.
 
-    RUNNING_IN_GUI         — set to True by GUI panels before importing any script module.
+    RUNNING_IN_GUI         — set to True by gui/main.py before importing any script module.
                              Causes interactive_options() to return immediately (no menu)
                              and pick_folder() to return None instead of opening a dialog.
 
@@ -54,7 +54,7 @@ import sys
 from pathlib import Path
 
 # ── GUI mode flag ──────────────────────────────────────────────────────────────
-# GUI panels should set this to True before importing any script module.
+# gui/main.py sets this to True before importing any script module.
 # Effects:
 #   • interactive_options() returns immediately (no blocking terminal menu)
 #   • pick_folder() returns None instead of opening a tkinter dialog

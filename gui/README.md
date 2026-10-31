@@ -26,7 +26,7 @@ python gui/main.py
 
 | File | Purpose |
 |---|---|
-| `main.py` | Entry point — creates `QApplication` and shows `MainWindow` |
+| `main.py` | Entry point — sets `music_tools_common.RUNNING_IN_GUI`, creates `QApplication` and shows `MainWindow` |
 | `main_window.py` | Main window: sidebar, central panel stack, log panel, status bar |
 | `settings_panel.py` | Settings form wired to `music_config.json` via `load_config()` |
 | `log_panel.py` | Timestamped colour-coded log widget with thread-safe bridge for `QThread` |

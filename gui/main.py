@@ -1,5 +1,5 @@
 """
-Music Tools GUI — Entry Point  v0.1
+Music Tools GUI — Entry Point  v0.2
 =====================================
 Run this file to launch the application:
 
@@ -21,6 +21,11 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
+# Must stay above the gui.main_window import: scripts must never open a terminal
+# menu or a second folder dialog under the GUI, even if one is imported at load time.
+import music_tools_common
+music_tools_common.RUNNING_IN_GUI = True
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont
